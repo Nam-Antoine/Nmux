@@ -44,11 +44,16 @@ win:
     - nsis
     - portable
   icon: resources/icon.png
-  artifactName: ${productName}-${version}-${arch}.${ext}
 
 nsis:
+  artifactName: ${productName}-Setup-${version}-${arch}.${ext}
   oneClick: false
   perMachine: false
   allowToChangeInstallationDirectory: true
   createDesktopShortcut: true
   createStartMenuShortcut: true
+
+# Portable target: one self-contained exe, nothing installed. It gets its own
+# name because the installer above also produces an .exe.
+portable:
+  artifactName: ${productName}-Portable-${version}-${arch}.${ext}
