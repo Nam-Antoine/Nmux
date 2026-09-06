@@ -1,0 +1,54 @@
+appId: dev.namtran.nmux
+productName: Nmux
+copyright: Copyright (c) 2026 Nathan Collins
+
+directories:
+  buildResources: resources
+  output: release
+
+files:
+  - out/**
+  - package.json
+
+# node-pty ships a prebuilt N-API binary that already runs under Electron
+# (verified by `pnpm smoke`). Rebuilding it from source fails because winpty's
+# GetCommitHash.bat is missing from the npm package, so the rebuild is skipped.
+npmRebuild: false
+
+# node-pty ships native binaries plus ConPTY helper executables. They must live
+# on the real filesystem, not inside the asar archive, or Windows cannot load them.
+asarUnpack:
+  - node_modules/node-pty/**
+
+# Electron fuses: build-time switches baked into the binary.
+#   runAsNode stays ON because node-pty forks a helper process with
+#   ELECTRON_RUN_AS_NODE, and the M2 daemon will use the same mechanism.
+electronFuses:
+  runAsNode: true
+  enableCookieEncryption: true
+  enableNodeOptionsEnvironmentVariable: false
+  enableNodeCliInspectArguments: false
+  enableEmbeddedAsarIntegrityValidation: true
+  onlyLoadAppFromAsar: true
+  grantFileProtocolExtraPrivileges: false
+
+# Runtime assets (tray icon) are read from process.resourcesPath when packaged.
+extraResources:
+  - from: resources
+    to: .
+    filter:
+      - "*.png"
+
+win:
+  target:
+    - nsis
+    - portable
+  icon: resources/icon.png
+  artifactName: ${productName}-${version}-${arch}.${ext}
+
+nsis:
+  oneClick: false
+  perMachine: false
+  allowToChangeInstallationDirectory: true
+  createDesktopShortcut: true
+  createStartMenuShortcut: true
