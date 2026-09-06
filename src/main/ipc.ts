@@ -78,6 +78,11 @@ function int(value: unknown, what: string, min: number, max: number): number {
   return value
 }
 
+function bool(value: unknown, what: string): boolean {
+  if (typeof value !== 'boolean') throw new TypeError(`${what} must be a boolean`)
+  return value
+}
+
 function label(value: unknown, what: string): string {
   const s = str(value, what, LIMITS.nameLength)
   if (CONTROL_CHARS_RE.test(s)) throw new TypeError(`${what} must not contain control characters`)
@@ -121,6 +126,7 @@ function createRequest(value: unknown): CreateSessionRequest {
     cwd: directory(v.cwd, 'cwd'),
     name: v.name === undefined ? undefined : label(v.name, 'name'),
     claudeArgs: args(v.claudeArgs),
+    skipPermissions: v.skipPermissions === undefined ? undefined : bool(v.skipPermissions, 'skipPermissions'),
     resumeClaudeSessionId:
       v.resumeClaudeSessionId === undefined ? undefined : uuid(v.resumeClaudeSessionId, 'resumeClaudeSessionId')
   }

@@ -11,6 +11,14 @@ import { SessionStore } from './store/SessionStore'
 import { createTray, updateTrayTooltip } from './tray'
 import { createMainWindow, getMainWindow, markQuitting, showMainWindow } from './window'
 
+// Development aid: give the dev build its own profile so it never fights an
+// installed Nmux for the single-instance lock or sessions.json (both resolve
+// to %APPDATA%/nmux on Windows). Ignored in packaged builds so the environment
+// cannot redirect a real install.
+if (!app.isPackaged && process.env.NMUX_USER_DATA_DIR) {
+  app.setPath('userData', process.env.NMUX_USER_DATA_DIR)
+}
+
 const gotLock = app.requestSingleInstanceLock()
 if (!gotLock) {
   app.quit()

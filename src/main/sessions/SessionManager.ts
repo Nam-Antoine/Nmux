@@ -20,6 +20,7 @@ import {
 import type { SessionStore } from '../store/SessionStore'
 import { PtySession } from './PtySession'
 import { claudeLaunch, sessionEnv, shellLaunch, type LaunchSpec } from './launch'
+import { transcriptState } from './claudeProjects'
 
 export interface SessionManagerEvents {
   data: (sessionId: string, data: string, seq: number) => void
@@ -29,6 +30,8 @@ export interface SessionManagerEvents {
 interface Entry {
   meta: SessionMeta
   pty?: PtySession
+  /** Screen at the moment the process exited, so attach() can still show it. */
+  lastScreen?: AttachResult
 }
 
 export class SessionManager extends EventEmitter {
@@ -80,6 +83,7 @@ export class SessionManager extends EventEmitter {
       cwd: req.cwd,
       claudeSessionId,
       claudeArgs: req.claudeArgs ?? [],
+      skipPermissions: req.kind === 'claude' && req.skipPermissions ? true : undefined,
       createdAt: now,
       lastActiveAt: now,
       status: 'exited'
@@ -90,12 +94,32 @@ export class SessionManager extends EventEmitter {
     return entry.meta
   }
 
-  /** Resume a Claude conversation or respawn a shell in its cwd. */
+  /**
+   * Resume a Claude conversation or respawn a shell in its cwd.
+   *
+   * `claude --resume` exits with "No conversation found" when the transcript
+   * has no messages (the session was never used, or only holds a Remote
+   * Control bridge record), so Nmux starts a fresh conversation in that case
+   * instead of dying with a blank screen.
+   */
   restart(id: string): SessionMeta {
     const entry = this.mustGet(id)
-    if (entry.meta.status === 'running') return entry.meta
-    this.spawn(entry, { resume: true })
-    return entry.meta
+    const { meta } = entry
+    if (meta.status === 'running') return meta
+    meta.notice = undefined
+    let resume = true
+    if (meta.kind === 'claude' && meta.claudeSessionId) {
+      const state = transcriptState(meta.cwd, meta.claudeSessionId)
+      if (state === 'missing' || state === 'empty') {
+        resume = false
+        // Claude refuses `--session-id` for an id that already has a file,
+        // even one without messages, so the empty case needs a new id.
+        if (state === 'empty') meta.claudeSessionId = randomUUID()
+        meta.notice = 'Nothing to resume: the previous conversation had no messages, so this is a new one.'
+      }
+    }
+    this.spawn(entry, { resume })
+    return meta
   }
 
   kill(id: string): void {
@@ -123,7 +147,7 @@ export class SessionManager extends EventEmitter {
   attach(id: string): AttachResult {
     const entry = this.mustGet(id)
     if (!entry.pty) {
-      return { snapshot: '', seq: 0, cols: DEFAULT_COLS, rows: DEFAULT_ROWS }
+      return entry.lastScreen ?? { snapshot: '', seq: 0, cols: DEFAULT_COLS, rows: DEFAULT_ROWS }
     }
     return entry.pty.snapshot()
   }
@@ -159,7 +183,8 @@ export class SessionManager extends EventEmitter {
         ? claudeLaunch({
             claudeSessionId: meta.claudeSessionId!,
             resume: opts.resume,
-            extraArgs: meta.claudeArgs
+            extraArgs: meta.claudeArgs,
+            skipPermissions: meta.skipPermissions
           })
         : shellLaunch()
 
@@ -179,11 +204,15 @@ export class SessionManager extends EventEmitter {
       meta.pid = undefined
       meta.lastActiveAt = Date.now()
       entry.pty = undefined
+      // Keep what was on screen (e.g. the error that ended the process).
+      entry.lastScreen = pty.snapshot()
       pty.dispose()
       this.notifyChanged()
     })
 
     entry.pty = pty
+    entry.lastScreen = undefined
+    if (meta.notice) pty.note(meta.notice)
     meta.status = 'running'
     meta.pid = pty.pid
     meta.exitCode = undefined

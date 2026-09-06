@@ -19,7 +19,7 @@ export function EmptyState(): React.JSX.Element {
         A persistent home for Claude Code. Sessions keep running when you close this window;
         find it again in the system tray.
       </p>
-      <button className="btn primary" onClick={openDialog}>
+      <button className="btn primary" onClick={() => openDialog()}>
         New session
       </button>
       {hasSessions && <p className="muted small">…or pick a session from the sidebar.</p>}

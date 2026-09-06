@@ -1,8 +1,10 @@
 /**
- * One xterm instance bound to one session. Stays mounted (hidden) when the
- * session is not active so switching back is instant and nothing is lost.
+ * One xterm instance bound to one session, living inside a grid pane. It is
+ * mounted only while a pane shows the session; re-mounting replays the
+ * process's serialized screen, so nothing is lost. `active` means the pane
+ * is the focused one (keyboard focus, refit).
  */
-import { useEffect, useRef } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { Terminal } from '@xterm/xterm'
 import { FitAddon } from '@xterm/addon-fit'
 import { SearchAddon } from '@xterm/addon-search'
@@ -26,6 +28,8 @@ interface TermHandle {
   fit: FitAddon
   /** Last size sent to the PTY, to avoid redundant resize round trips. */
   sent: { cols: number; rows: number }
+  /** Whether attach() has run at least once for this xterm. */
+  attached: boolean
 }
 
 export function TerminalPane({ sessionId, active }: Props): React.JSX.Element {
@@ -66,7 +70,7 @@ export function TerminalPane({ sessionId, active }: Props): React.JSX.Element {
       console.warn('[TerminalPane] WebGL renderer unavailable, using DOM renderer', err)
     }
 
-    const handle: TermHandle = { term, fit, sent: { cols: 0, rows: 0 } }
+    const handle: TermHandle = { term, fit, sent: { cols: 0, rows: 0 }, attached: false }
     handleRef.current = handle
 
     term.attachCustomKeyEventHandler((ev) => {
@@ -76,6 +80,7 @@ export function TerminalPane({ sessionId, active }: Props): React.JSX.Element {
       if (ev.ctrlKey && ((ev.shiftKey && key === 'n') || ev.key === 'PageUp' || ev.key === 'PageDown')) {
         return false
       }
+      if (ev.ctrlKey && ev.shiftKey && (ev.key === 'ArrowLeft' || ev.key === 'ArrowRight')) return false
       // Copy: Ctrl+Shift+C always, Ctrl+C only when there is a selection
       // (otherwise Ctrl+C must reach the process as SIGINT).
       if (ev.ctrlKey && key === 'c' && (ev.shiftKey || term.hasSelection())) {
@@ -101,12 +106,16 @@ export function TerminalPane({ sessionId, active }: Props): React.JSX.Element {
     }
   }, [sessionId])
 
-  // 2. Attach to the live process. Re-runs whenever a new process starts
-  //    (pid changes), which is how "Resume" re-binds the same pane.
+  // 2. Attach to the process. Runs on first mount (an exited session still
+  //    has its last screen) and again whenever a new process starts (pid
+  //    changes), which is how "Resume" re-binds the same pane. When the
+  //    process ends the pane keeps what is on screen.
   const pid = session?.pid
   useEffect(() => {
     const handle = handleRef.current
-    if (!handle || pid === undefined) return
+    if (!handle) return
+    if (pid === undefined && handle.attached) return
+    handle.attached = true
     const { term } = handle
 
     let disposed = false
@@ -151,10 +160,20 @@ export function TerminalPane({ sessionId, active }: Props): React.JSX.Element {
   }, [active, sessionId])
 
   const exited = session?.status === 'exited'
+  const notice = session?.notice
+  const [dismissedNotice, setDismissedNotice] = useState<string | null>(null)
 
   return (
-    <div className="terminal-pane" hidden={!active}>
+    <div className="terminal-pane">
       <div ref={hostRef} className="terminal-host" />
+      {notice && notice !== dismissedNotice && (
+        <div className="terminal-notice">
+          <span>{notice}</span>
+          <button className="icon-btn" title="Dismiss" onClick={() => setDismissedNotice(notice)}>
+            ×
+          </button>
+        </div>
+      )}
       {exited && session && (
         <div className="terminal-overlay">
           <div className="terminal-overlay-card">

@@ -17,7 +17,7 @@ export interface SessionMeta {
   id: string
   name: string
   kind: SessionKind
-  /** Working directory the process was started in. */
+  /** Working directory the process was started in. Sessions are grouped by it in the UI. */
   cwd: string
   /**
    * UUID handed to `claude --session-id`. Nmux owns it, so the conversation
@@ -26,6 +26,17 @@ export interface SessionMeta {
   claudeSessionId?: string
   /** Extra CLI args appended to the claude command (e.g. `--model`, `--add-dir`). */
   claudeArgs: string[]
+  /**
+   * Launch claude with `--dangerously-skip-permissions` (every tool call is
+   * auto-approved). Kept out of `claudeArgs` so the UI can show it and so a
+   * resume keeps the same mode. Only meaningful for `kind === 'claude'`.
+   */
+  skipPermissions?: boolean
+  /**
+   * One-line message from Nmux about the last start, e.g. why a resume became
+   * a fresh conversation. Cleared on the next start.
+   */
+  notice?: string
   createdAt: number
   lastActiveAt: number
   status: SessionStatus
@@ -38,6 +49,8 @@ export interface CreateSessionRequest {
   cwd: string
   name?: string
   claudeArgs?: string[]
+  /** See `SessionMeta.skipPermissions`. */
+  skipPermissions?: boolean
   /** Attach to an existing Claude conversation instead of starting a new one. */
   resumeClaudeSessionId?: string
 }

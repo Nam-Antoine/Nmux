@@ -44,7 +44,11 @@ Make it comfortable enough to replace the VS Code terminal.
 - [ ] Settings (font, size, theme, default shell, default claude args) in `settings.json`
 - [ ] Search UI for the already-loaded search addon (Ctrl+Shift+F)
 - [ ] Right-click context menu: copy, paste, clear, rename
-- [ ] Recent folders list in the new-session dialog
+- [x] Recent folders list in the new-session dialog (suggestions from known folders)
+- [x] Sidebar groups sessions by folder: collapsible, running count, per-folder "+"
+- [x] "Skip permission prompts" option when creating a Claude session
+- [x] Resume of a never-used conversation starts a new one instead of exit code 1;
+      exited sessions keep their last screen
 - [ ] "Open in Explorer" / "Open in VS Code" for the session cwd
 - [ ] Bell / activity indicator on inactive sessions (dot turns orange on output)
 - [ ] Window state (size, position, last active session) restored on launch
@@ -72,7 +76,7 @@ Use the fact that Nmux owns the session ID.
       sidebar badge
 - [ ] Import existing conversations from `~/.claude/projects` into the list
 - [ ] Per-project defaults (model, `--add-dir`, permission mode)
-- [ ] Grid view: several sessions visible at once
+- [x] Grid view: several sessions visible at once (1×1 … 4×4, per-pane session picker)
 
 ## M4 · Distribution
 

@@ -33,14 +33,20 @@ export interface ClaudeLaunchOptions {
   /** true -> `--resume <id>`, false -> `--session-id <id>` */
   resume: boolean
   extraArgs?: string[]
+  /** Append `--dangerously-skip-permissions`. */
+  skipPermissions?: boolean
 }
+
+const SKIP_PERMISSIONS_FLAG = '--dangerously-skip-permissions'
 
 export function claudeLaunch(opts: ClaudeLaunchOptions): LaunchSpec {
   const bin = findOnPath('claude') ?? (isWin ? 'claude.exe' : 'claude')
   const sessionArgs = opts.resume
     ? ['--resume', opts.claudeSessionId]
     : ['--session-id', opts.claudeSessionId]
-  const args = [...sessionArgs, ...(opts.extraArgs ?? [])]
+  // The flag is owned by `skipPermissions`; drop a duplicate typed into extra args.
+  const extra = (opts.extraArgs ?? []).filter((a) => !(opts.skipPermissions && a === SKIP_PERMISSIONS_FLAG))
+  const args = [...sessionArgs, ...(opts.skipPermissions ? [SKIP_PERMISSIONS_FLAG] : []), ...extra]
 
   // npm-installed claude is a .cmd shim on Windows; ConPTY needs cmd.exe to run it.
   if (isWin && /\.(cmd|bat)$/i.test(bin)) {

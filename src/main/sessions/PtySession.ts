@@ -98,6 +98,16 @@ export class PtySession extends EventEmitter {
     if (!this.exited) this.proc.write(data)
   }
 
+  /** Print a dim line from Nmux itself (not from the process), e.g. a resume notice. */
+  note(text: string): void {
+    const data = `\x1b[2m[nmux] ${text}\x1b[0m\r\n`
+    const seq = ++this.seq
+    this.term.write(data, () => {
+      this.parsedSeq = seq
+    })
+    this.emit('data', data, seq)
+  }
+
   resize(cols: number, rows: number): void {
     if (cols < 2 || rows < 1) return
     if (cols === this.term.cols && rows === this.term.rows) return

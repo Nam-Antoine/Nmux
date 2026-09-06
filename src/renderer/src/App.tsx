@@ -1,18 +1,16 @@
 import { useEffect } from 'react'
-import { EmptyState } from './components/EmptyState'
 import { NewSessionDialog } from './components/NewSessionDialog'
 import { Sidebar } from './components/Sidebar'
 import { StatusBar } from './components/StatusBar'
-import { TerminalPane } from './components/TerminalPane'
+import { Workspace } from './components/Workspace'
 import { useSessions } from './store/sessions'
 
 export function App(): React.JSX.Element {
   const init = useSessions((s) => s.init)
-  const activeId = useSessions((s) => s.activeId)
-  const mountedIds = useSessions((s) => s.mountedIds)
   const dialogOpen = useSessions((s) => s.dialogOpen)
   const openDialog = useSessions((s) => s.openDialog)
   const selectRelative = useSessions((s) => s.selectRelative)
+  const focusCellRelative = useSessions((s) => s.focusCellRelative)
 
   useEffect(() => init(), [init])
 
@@ -28,21 +26,22 @@ export function App(): React.JSX.Element {
       } else if (ev.ctrlKey && ev.key === 'PageUp') {
         ev.preventDefault()
         selectRelative(-1)
+      } else if (ev.ctrlKey && ev.shiftKey && ev.key === 'ArrowRight') {
+        ev.preventDefault()
+        focusCellRelative(1)
+      } else if (ev.ctrlKey && ev.shiftKey && ev.key === 'ArrowLeft') {
+        ev.preventDefault()
+        focusCellRelative(-1)
       }
     }
     window.addEventListener('keydown', onKeyDown)
     return () => window.removeEventListener('keydown', onKeyDown)
-  }, [openDialog, selectRelative])
+  }, [openDialog, selectRelative, focusCellRelative])
 
   return (
     <div className="app">
       <Sidebar />
-      <main className="workspace">
-        {mountedIds.map((id) => (
-          <TerminalPane key={id} sessionId={id} active={id === activeId} />
-        ))}
-        {activeId === null && <EmptyState />}
-      </main>
+      <Workspace />
       <StatusBar />
       {dialogOpen && <NewSessionDialog />}
     </div>

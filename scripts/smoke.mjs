@@ -15,7 +15,7 @@
  * Claude Code part (it launches the real CLI, which needs `claude` on PATH).
  */
 import { spawn } from 'node:child_process'
-import { mkdirSync, writeFileSync } from 'node:fs'
+import { mkdirSync, rmSync, writeFileSync } from 'node:fs'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
@@ -42,6 +42,12 @@ if (attachIndex === -1) {
   const exeIndex = process.argv.indexOf('--exe')
   const exe = exeIndex !== -1 ? resolve(process.argv[exeIndex + 1]) : null
   const electron = exe ?? join(root, 'node_modules', 'electron', 'dist', process.platform === 'win32' ? 'electron.exe' : 'electron')
+  // The dev build gets a fresh throwaway profile so an installed Nmux can keep
+  // running and no layout or session list leaks between runs.
+  if (!exe) {
+    env.NMUX_USER_DATA_DIR = join(outDir, 'userData')
+    rmSync(env.NMUX_USER_DATA_DIR, { recursive: true, force: true })
+  }
   const args = [`--remote-debugging-port=${port}`, ...(exe ? [] : [root])]
   child = spawn(electron, args, { env, stdio: ['ignore', 'pipe', 'pipe'] })
   child.stdout.on('data', (d) => process.stdout.write(`[electron] ${d}`))
@@ -140,6 +146,7 @@ try {
   await expectReject('rejects missing cwd', `window.nmux.sessions.create({ kind: 'shell', cwd: ${JSON.stringify(join(root, 'does-not-exist'))} })`)
   await expectReject('rejects unknown kind', `window.nmux.sessions.create({ kind: 'bash', cwd: ${JSON.stringify(root)} })`)
   await expectReject('rejects non-uuid id', `window.nmux.sessions.attach('../etc/passwd')`)
+  await expectReject('rejects non-boolean skipPermissions', `window.nmux.sessions.create({ kind: 'claude', cwd: ${JSON.stringify(root)}, skipPermissions: 'yes' })`)
   await expectReject('rejects unknown event', `window.nmux.on('__proto__', () => {})`)
   const before = await evaluate('location.href')
   await evaluate(`location.assign('https://example.com/'); new Promise(r => setTimeout(r, 800)).then(() => location.href)`)
@@ -160,6 +167,64 @@ try {
   check(shellAttach.snapshot.includes('NMUX_SMOKE_OK'), `shell output visible in attach snapshot (${shellAttach.cols}x${shellAttach.rows}, seq ${shellAttach.seq})`)
   check(shellAttach.cols > 80 && shellAttach.rows > 20, 'terminal was fitted to the pane')
 
+  // --- sidebar: folder groups ------------------------------------------------------
+  const folderTitle = await evaluate(`document.querySelector('.folder-header')?.title ?? null`)
+  check(folderTitle === root, `sidebar groups sessions under their folder (${folderTitle})`)
+  check((await evaluate(`!!document.querySelector('.folder-header .folder-add')`)) === true, 'folder row has a + button')
+  await evaluate(`document.querySelector('.folder-header').click()`)
+  await sleep(200)
+  check((await evaluate(`document.querySelectorAll('.session-item').length`)) === 0, 'clicking the folder row collapses it')
+  await evaluate(`document.querySelector('.folder-header').click()`)
+  await sleep(200)
+  check((await evaluate(`document.querySelectorAll('.session-item').length`)) >= 1, 'clicking again expands it')
+  await evaluate(`document.querySelector('.folder-header .folder-add').click()`)
+  await sleep(200)
+  const modalTitle = await evaluate(`document.querySelector('.modal h2')?.textContent ?? null`)
+  const modalCwd = await evaluate(`document.querySelector('.modal input[list]')?.value ?? null`)
+  check(modalTitle !== null && modalTitle.startsWith('New session in') && modalCwd === root, `folder + opens the dialog prefilled (${modalTitle})`)
+  check((await evaluate(`!!document.querySelector('.modal input[type=checkbox]')`)) === true, 'dialog offers the skip-permissions checkbox')
+  await screenshot('02b-folder-dialog.png')
+  await evaluate(`document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' })); window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }))`)
+  await sleep(200)
+  check((await evaluate(`!document.querySelector('.modal')`)) === true, 'Escape closes the dialog')
+
+  // --- grid view -----------------------------------------------------------------
+  await evaluate(`document.querySelector('.layout-btn[title="2×2 grid"]').click()`)
+  await sleep(300)
+  check((await evaluate(`document.querySelectorAll('.cell').length`)) === 4, '2×2 preset shows four panes')
+  check((await evaluate(`!!document.querySelector('.cell[data-cell="0"] .terminal-pane')`)) === true, 'the shell stays in the first pane')
+  await evaluate(`(() => { const sel = document.querySelector('.cell[data-cell="3"] select'); sel.value = ${JSON.stringify(shell.id)}; sel.dispatchEvent(new Event('change', { bubbles: true })) })()`)
+  await sleep(1500)
+  check((await evaluate(`!!document.querySelector('.cell[data-cell="3"] .terminal-pane') && !document.querySelector('.cell[data-cell="0"] .terminal-pane')`)) === true, 'pane picker moves the session to another pane')
+  check((await evaluate(`document.querySelector('.cell[data-cell="3"]').classList.contains('focused')`)) === true, 'the pane that received it is focused')
+  const movedAttach = await evaluate(`window.nmux.sessions.attach(${JSON.stringify(shell.id)})`)
+  check(movedAttach.snapshot.includes('NMUX_SMOKE_OK'), 'moved pane still has its output')
+  await screenshot('02c-grid.png')
+  await evaluate(`document.querySelector('.stepper button[aria-label="more cols"]').click()`)
+  await sleep(300)
+  check((await evaluate(`document.querySelectorAll('.cell').length`)) === 6, 'cols stepper makes a 2×3 grid')
+  check((await evaluate(`document.querySelectorAll('.terminal-pane').length`)) === 1, 'session survives a grid resize')
+  await evaluate(`document.querySelector('.layout-btn[title="1×1 grid"]').click()`)
+  await sleep(500)
+  check((await evaluate(`document.querySelectorAll('.cell').length === 1 && !!document.querySelector('.cell .terminal-pane') && !document.querySelector('.workspace.multi')`)) === true, 'back to a single pane with the session in it')
+
+  // --- exited sessions keep their last screen -------------------------------------
+  // Tested on a shell (normal buffer) rather than a killed Claude TUI, whose
+  // alt-screen may be restored on exit.
+  const keeper = await evaluate(`window.nmux.sessions.create({ kind: 'shell', cwd: ${JSON.stringify(root)}, name: 'smoke-lastscreen' })`)
+  await sleep(2000)
+  await evaluate(`window.nmux.sessions.write(${JSON.stringify(keeper.id)}, 'echo NMUX_KEEP_MARKER\\r')`)
+  await sleep(1500)
+  await evaluate(`window.nmux.sessions.kill(${JSON.stringify(keeper.id)})`)
+  for (let i = 0; i < 40; i++) {
+    const m = (await evaluate('window.nmux.sessions.list()')).find((s) => s.id === keeper.id)
+    if (m && m.status === 'exited') break
+    await sleep(500)
+  }
+  const keptScreen = (await evaluate(`window.nmux.sessions.attach(${JSON.stringify(keeper.id)})`)).snapshot
+  check(keptScreen.includes('NMUX_KEEP_MARKER'), 'exited session still shows its last screen')
+  await evaluate(`window.nmux.sessions.remove(${JSON.stringify(keeper.id)})`)
+
   if (!skipClaude && info.claudeBinary) {
     const claude = await evaluate(`window.nmux.sessions.create({ kind: 'claude', cwd: ${JSON.stringify(root)}, name: 'smoke-claude' })`)
     check(claude.status === 'running' && typeof claude.claudeSessionId === 'string', 'claude session spawned with owned session id')
@@ -170,6 +235,53 @@ try {
     const screen = strip(claudeAttach.snapshot)
     check(/Claude Code/.test(screen), 'Claude Code TUI rendered')
     console.log(screen.split('\n').filter((l) => l.trim()).slice(0, 6).map((l) => '   | ' + l.trimEnd()).join('\n'))
+
+    // Second Claude session in the same folder, with permissions skipped.
+    const skip = await evaluate(`window.nmux.sessions.create({ kind: 'claude', cwd: ${JSON.stringify(root)}, name: 'smoke-claude-skip', skipPermissions: true })`)
+    check(skip.status === 'running' && skip.skipPermissions === true, 'claude session spawned with skipPermissions')
+    await clickSession('smoke-claude-skip')
+    await sleep(9000)
+    await screenshot('03b-claude-skip.png')
+    const skipAttach = await evaluate(`window.nmux.sessions.attach(${JSON.stringify(skip.id)})`)
+    const skipScreen = strip(skipAttach.snapshot)
+    check(/bypass permissions/i.test(skipScreen), 'claude reports bypass-permissions mode (flag was passed)')
+    check((await evaluate(`[...document.querySelectorAll('.session-item .tag.warn')].length`)) === 1, 'sidebar tags the skip-permissions session')
+    check((await evaluate(`document.querySelectorAll('.folder-header').length`)) === 1, 'all three sessions share one folder group')
+
+    // --- resume ---------------------------------------------------------------------
+    const waitExit = async (id) => {
+      for (let i = 0; i < 40; i++) {
+        const m = (await evaluate('window.nmux.sessions.list()')).find((s) => s.id === id)
+        if (m && m.status === 'exited') return m
+        await sleep(500)
+      }
+      throw new Error(`session ${id} never exited`)
+    }
+    // A conversation with a message resumes with its history.
+    await evaluate(`window.nmux.sessions.write(${JSON.stringify(claude.id)}, 'reply with exactly the word pong\\r')`)
+    await sleep(15000)
+    await evaluate(`window.nmux.sessions.kill(${JSON.stringify(claude.id)})`)
+    await waitExit(claude.id)
+    const resumed = await evaluate(`window.nmux.sessions.restart(${JSON.stringify(claude.id)})`)
+    check(resumed.status === 'running' && resumed.claudeSessionId === claude.claudeSessionId && !resumed.notice, 'resume keeps the session id')
+    await clickSession('smoke-claude')
+    await sleep(9000)
+    await screenshot('05-resumed.png')
+    const resumedScreen = strip((await evaluate(`window.nmux.sessions.attach(${JSON.stringify(claude.id)})`)).snapshot)
+    check(/pong/.test(resumedScreen), 'resumed conversation shows its history')
+    check((await evaluate(`window.nmux.sessions.list()`)).find((s) => s.id === claude.id).status === 'running', 'resumed claude is still running')
+
+    // A conversation that never had a message cannot be resumed: Nmux starts a new one.
+    await evaluate(`window.nmux.sessions.kill(${JSON.stringify(skip.id)})`)
+    await waitExit(skip.id)
+    const fresh = await evaluate(`window.nmux.sessions.restart(${JSON.stringify(skip.id)})`)
+    check(fresh.status === 'running' && typeof fresh.notice === 'string', `restart of an empty conversation starts a new one (${fresh.notice})`)
+    await clickSession('smoke-claude-skip')
+    await sleep(9000)
+    await screenshot('06-fresh-after-empty.png')
+    const freshMeta = (await evaluate(`window.nmux.sessions.list()`)).find((s) => s.id === skip.id)
+    check(freshMeta.status === 'running', 'fresh conversation is running (not exit code 1)')
+    check((await evaluate(`!!document.querySelector('.terminal-pane:not([hidden]) .terminal-notice')`)) === true, 'pane shows the notice')
 
     await clickSession('smoke-shell')
     await sleep(1000)
