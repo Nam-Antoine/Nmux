@@ -210,7 +210,10 @@ function SessionItem({ session, active, now }: { session: SessionMeta; active: b
             onClick={(e) => e.stopPropagation()}
           />
         ) : (
-          <span className="session-name">{session.name}</span>
+          <span className={`session-name${activity === 'busy' ? ' working' : ''}`}>
+            {activity === 'busy' && <span className="spinner" aria-hidden />}
+            {session.name}
+          </span>
         )}
         <span className="session-sub muted">
           <span className={`tag${running ? ' ok' : ''}${activity === 'busy' ? ' live' : ''}`}>{ACTIVITY_LABEL[activity]}</span>

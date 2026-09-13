@@ -226,6 +226,60 @@ input:focus {
   text-overflow: ellipsis;
 }
 
+/* The label itself animates while output is flowing: a braille spinner
+   in front of the name and the name breathing between fg and the ok green. */
+.session-name.working,
+.card-title .working {
+  animation: label-pulse 1.6s ease-in-out infinite alternate;
+}
+
+@keyframes label-pulse {
+  from {
+    color: var(--fg);
+  }
+  to {
+    color: var(--ok);
+  }
+}
+
+.spinner {
+  display: inline-block;
+  width: 1.1em;
+  margin-right: 2px;
+  color: var(--ok);
+  font-family: 'Cascadia Mono', Consolas, 'Segoe UI Symbol', monospace;
+}
+
+.spinner::before {
+  content: '⠋';
+  animation: spin-braille 0.8s steps(1, end) infinite;
+}
+
+@keyframes spin-braille {
+  0% { content: '⠋'; }
+  10% { content: '⠙'; }
+  20% { content: '⠹'; }
+  30% { content: '⠸'; }
+  40% { content: '⠼'; }
+  50% { content: '⠴'; }
+  60% { content: '⠦'; }
+  70% { content: '⠧'; }
+  80% { content: '⠇'; }
+  90% { content: '⠏'; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .session-name.working,
+  .card-title .working {
+    animation: none;
+    color: var(--ok);
+  }
+  .spinner::before {
+    animation: none;
+    content: '●';
+  }
+}
+
 .session-sub {
   font-size: 11px;
   white-space: nowrap;

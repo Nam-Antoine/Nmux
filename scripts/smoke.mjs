@@ -290,6 +290,11 @@ try {
   await evaluate(`window.nmux.sessions.write(${JSON.stringify(shell.id)}, 'echo NMUX_BUSY_PING\\r')`)
   await sleep(600)
   check((await evaluate(`!!document.querySelector('.statusbar .status-dot.busy')`)) === true, 'status bar shows the shell as working right after output')
+  check(
+    (await evaluate(`(() => { const el = document.querySelector('.sidebar .session-name.working'); if (!el) return 'no-working-label'; if (!el.querySelector('.spinner')) return 'no-spinner'; const cs = getComputedStyle(el); return cs.animationName !== 'none' && cs.color !== 'rgba(0, 0, 0, 0)' ? 'ok' : 'anim=' + cs.animationName + ' color=' + cs.color })()`)) === 'ok',
+    'sidebar label animates while the session is working'
+  )
+  await screenshot('02d0-working-label.png')
   await evaluate(`window.dispatchEvent(new KeyboardEvent('keydown', { key: 'O', ctrlKey: true, shiftKey: true }))`)
   await sleep(400)
   check((await evaluate(`!!document.querySelector('.overview')`)) === true, 'Ctrl+Shift+O opens the overview')

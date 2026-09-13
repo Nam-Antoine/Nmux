@@ -120,7 +120,10 @@ function SessionCard({ session, active, now }: { session: SessionMeta; active: b
     >
       <div className="card-title">
         <span className={`status-dot ${activity === 'busy' ? 'busy' : running ? 'running' : 'exited'}`} />
-        <span className="ellipsis">{session.name}</span>
+        <span className={`ellipsis${activity === 'busy' ? ' working' : ''}`}>
+          {activity === 'busy' && <span className="spinner" aria-hidden />}
+          {session.name}
+        </span>
         <span className={`tag${running ? ' ok' : ''}`}>{LABEL[activity]}</span>
       </div>
       <div className={`card-status ${activity}`}>{statusLine()}</div>
