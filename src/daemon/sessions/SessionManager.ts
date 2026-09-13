@@ -2,8 +2,8 @@
  * Owns every session: metadata + (optionally) a live PtySession.
  *
  * Transport-agnostic on purpose: it emits events and exposes plain methods.
- * `src/main/ipc.ts` adapts it to Electron IPC today; a WebSocket adapter can
- * wrap the same class when the daemon is split out (see docs/PLAN.md, M2).
+ * `src/daemon/server.ts` exposes it over the daemon pipe; the Electron app
+ * talks to it through `src/main/daemon/client.ts`.
  */
 import { EventEmitter } from 'node:events'
 import { randomUUID } from 'node:crypto'
@@ -40,8 +40,8 @@ export class SessionManager extends EventEmitter {
 
   constructor(private readonly store: SessionStore) {
     super()
-    // Nothing survives a main-process restart yet (see PLAN.md M2), so every
-    // persisted session comes back as `exited` and can be resumed/restarted.
+    // A process cannot outlive the daemon that spawned it, so after a daemon
+    // start every persisted session is `exited` and can be resumed/restarted.
     for (const meta of store.load()) {
       this.entries.set(meta.id, {
         meta: { ...meta, status: 'exited', pid: undefined }
@@ -164,7 +164,7 @@ export class SessionManager extends EventEmitter {
     this.entries.get(id)?.pty?.resize(cols, rows)
   }
 
-  /** Kill everything. Called on app quit. */
+  /** Kill everything. Called when the daemon is told to stop. */
   dispose(): void {
     for (const entry of this.entries.values()) {
       entry.pty?.dispose()
@@ -236,7 +236,8 @@ export class SessionManager extends EventEmitter {
     this.saveTimer = setTimeout(() => this.flushSave(), 500)
   }
 
-  private flushSave(): void {
+  /** Write the session list now instead of after the debounce. */
+  flushSave(): void {
     if (this.saveTimer) {
       clearTimeout(this.saveTimer)
       this.saveTimer = null

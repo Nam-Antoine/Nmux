@@ -73,6 +73,8 @@ export interface AppInfo {
   homeDir: string
   /** Resolved path of the `claude` binary, or null when it is not on PATH. */
   claudeBinary: string | null
+  /** Process id of the session daemon the app is attached to, or null while disconnected. */
+  daemonPid: number | null
 }
 
 export const DEFAULT_COLS = 120

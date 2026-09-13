@@ -10,6 +10,7 @@ import { folderKey, visualOrder } from '../lib/folders'
 
 const COLLAPSED_KEY = 'nmux.collapsedFolders'
 const LAYOUT_KEY = 'nmux.layout'
+const SIDEBAR_FOLDED_KEY = 'nmux.sidebarFolded'
 
 /** Largest grid on either axis (4×4 = 16 panes). */
 export const MAX_GRID = 4
@@ -36,8 +37,14 @@ interface SessionsState {
   dialogPreset: DialogPreset | null
   /** Folder keys (see lib/folders) whose group is collapsed in the sidebar. */
   collapsedFolders: string[]
+  /** Whether the sidebar is folded down to a narrow rail. */
+  sidebarFolded: boolean
+  /** The session dashboard covering the workspace. */
+  overviewOpen: boolean
 
   init(): () => void
+  toggleOverview(): void
+  closeOverview(): void
   /** Show a session: focus the pane it is in, or put it in the focused pane. */
   select(id: string): void
   /** Cycle the focused pane through the sessions not shown elsewhere. */
@@ -50,6 +57,7 @@ interface SessionsState {
   openDialog(preset?: DialogPreset): void
   closeDialog(): void
   toggleFolder(key: string): void
+  toggleSidebar(): void
   create(req: CreateSessionRequest): Promise<void>
   restart(id: string): Promise<void>
   kill(id: string): Promise<void>
@@ -78,6 +86,10 @@ function writeJson(key: string, value: unknown): void {
 function loadCollapsed(): string[] {
   const parsed = readJson(COLLAPSED_KEY)
   return Array.isArray(parsed) ? parsed.filter((k): k is string => typeof k === 'string') : []
+}
+
+function loadSidebarFolded(): boolean {
+  return readJson(SIDEBAR_FOLDED_KEY) === true
 }
 
 const clampAxis = (n: unknown): number =>
@@ -125,6 +137,11 @@ export const useSessions = create<SessionsState>((set, get) => {
     dialogOpen: false,
     dialogPreset: null,
     collapsedFolders: loadCollapsed(),
+    sidebarFolded: loadSidebarFolded(),
+    overviewOpen: false,
+
+    toggleOverview: () => set((state) => ({ overviewOpen: !state.overviewOpen })),
+    closeOverview: () => set({ overviewOpen: false }),
 
     init() {
       const apply = (sessions: SessionMeta[]): void => {
@@ -210,13 +227,19 @@ export const useSessions = create<SessionsState>((set, get) => {
       set({ collapsedFolders })
     },
 
+    toggleSidebar() {
+      const sidebarFolded = !get().sidebarFolded
+      writeJson(SIDEBAR_FOLDED_KEY, sidebarFolded)
+      set({ sidebarFolded })
+    },
+
     async create(req) {
       const meta = await api.sessions.create(req)
       // The changed-event with the new session may still be in flight; put it
       // in the list now so select() can find its folder.
       set((state) => (state.sessions.some((s) => s.id === meta.id) ? {} : { sessions: [meta, ...state.sessions] }))
       get().select(meta.id)
-      set({ dialogOpen: false, dialogPreset: null })
+      set({ dialogOpen: false, dialogPreset: null, overviewOpen: false })
     },
 
     async restart(id) {

@@ -6,12 +6,14 @@ import { useMemo } from 'react'
 import { groupByFolder } from '../lib/folders'
 import { useSessions } from '../store/sessions'
 import { EmptyState } from './EmptyState'
+import { Overview } from './Overview'
 import { TerminalPane } from './TerminalPane'
 
 export function Workspace(): React.JSX.Element {
   const layout = useSessions((s) => s.layout)
   const cells = useSessions((s) => s.cells)
   const focusedCell = useSessions((s) => s.focusedCell)
+  const overviewOpen = useSessions((s) => s.overviewOpen)
   const multi = cells.length > 1
 
   return (
@@ -25,6 +27,7 @@ export function Workspace(): React.JSX.Element {
       {cells.map((id, i) => (
         <GridCell key={i} index={i} sessionId={id} focused={i === focusedCell} multi={multi} />
       ))}
+      {overviewOpen && <Overview />}
     </main>
   )
 }
@@ -68,8 +71,10 @@ function GridCell({
               <optgroup key={g.key} label={g.name}>
                 {g.sessions.map((s) => (
                   <option key={s.id} value={s.id}>
+                    {s.status === 'running' ? '● ' : '○ '}
                     {s.name}
                     {s.kind === 'shell' ? ' (shell)' : ''}
+                    {s.status !== 'running' ? ' — exited' : ''}
                   </option>
                 ))}
               </optgroup>

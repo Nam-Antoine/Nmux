@@ -42,6 +42,10 @@ Make it comfortable enough to replace the VS Code terminal.
       before the hard kill. Today's TerminateProcess makes Claude Code log
       "fullscreen renderer didn't finish starting last time" on its next launch.
 - [ ] Settings (font, size, theme, default shell, default claude args) in `settings.json`
+      (file exists since 2026-09-13 with the keep-awake mode; extend it)
+- [x] Keep the PC awake while a session is busy (tray: always / plugged in / never),
+      so a locked laptop finishes a long Claude task instead of sleeping on the
+      idle timer. Sleep and hibernate pause sessions; they resume after wake.
 - [ ] Search UI for the already-loaded search addon (Ctrl+Shift+F)
 - [ ] Right-click context menu: copy, paste, clear, rename
 - [x] Recent folders list in the new-session dialog (suggestions from known folders)
@@ -54,18 +58,23 @@ Make it comfortable enough to replace the VS Code terminal.
 - [ ] Window state (size, position, last active session) restored on launch
 - [ ] Output batching in `ipc.ts` if profiling shows IPC overhead on large outputs
 
-## M2 · Daemon split (true tmux semantics)
+## M2 · Daemon split (true tmux semantics) — done (2026-09-13)
 
 Sessions survive UI crashes and app restarts.
 
-- [ ] Move `src/main/sessions/` + `store/` into `src/daemon/` with a WebSocket
-      (localhost, random port + token written to `userData`) or named-pipe server
-- [ ] Launch the daemon as a detached child using the Electron binary with
+- [x] `src/daemon/`: sessions + store behind a named-pipe server (Unix socket
+      elsewhere), random per-start token in `<userData>/daemon.json`
+- [x] Daemon launched as a detached child of the app's own binary with
       `ELECTRON_RUN_AS_NODE=1` (same node-pty ABI, no second runtime to ship)
-- [ ] `ipc.ts` becomes a thin proxy: renderer ↔ main ↔ daemon
-- [ ] Attach on startup replays each session's serialized screen (already supported)
-- [ ] Tray "Quit" vs "Quit and stop daemon"
-- [ ] Optional: start daemon at login
+- [x] `ipc.ts` is a thin proxy: renderer ↔ main ↔ daemon, validated at both hops
+- [x] Attach on startup replays each session's serialized screen
+- [x] Tray "Quit Nmux" (detach) vs "Quit and stop all sessions"
+- [x] Daemon exits by itself when nothing is attached and nothing is running
+- [x] Older daemon kept across an upgrade while it has running sessions
+- [x] Smoke test hard-kills and relaunches the app, checks the shell survived
+- [ ] `nmux` CLI: `ls`, `new`, `attach <name>` from any terminal (VS Code included)
+- [ ] Optional: start daemon at login and auto-resume the sessions that were running
+- [ ] Installer: ask the daemon to stop instead of killing `Nmux.exe`
 
 ## M3 · Claude-aware features
 

@@ -1,9 +1,13 @@
-import { useState } from 'react'
+import { useMemo, useState } from 'react'
+import { activityOf, ago, lastOutput, useNow } from '../lib/activity'
 import { MAX_GRID, useSessions } from '../store/sessions'
 
 export function StatusBar(): React.JSX.Element {
   const session = useSessions((s) => s.sessions.find((x) => x.id === s.activeId))
   const [copied, setCopied] = useState(false)
+  const now = useNow(1000)
+  const activity = session ? activityOf(session, now) : null
+  const last = session ? lastOutput(session.id) : undefined
 
   const copyResume = (): void => {
     if (!session?.claudeSessionId) return
@@ -14,10 +18,18 @@ export function StatusBar(): React.JSX.Element {
 
   return (
     <footer className="statusbar">
+      <Counts now={now} />
+      <span className="sep" />
       {session ? (
         <>
-          <span className={`status-dot ${session.status}`} />
-          <span>{session.status === 'running' ? `running · pid ${session.pid}` : 'exited'}</span>
+          <span className={`status-dot ${activity === 'busy' ? 'busy' : session.status === 'running' ? 'running' : 'exited'}`} />
+          <span className={activity === 'busy' ? 'ok-text' : undefined}>
+            {activity === 'busy'
+              ? `working · pid ${session.pid}`
+              : activity === 'idle'
+                ? `idle${last ? ` · last output ${ago(now - last)}` : ''} · pid ${session.pid}`
+                : 'exited'}
+          </span>
           {session.skipPermissions && (
             <span className="tag warn" title="Started with --dangerously-skip-permissions">
               skips permissions
@@ -42,6 +54,40 @@ export function StatusBar(): React.JSX.Element {
       <span className="grow" />
       <LayoutPicker />
     </footer>
+  )
+}
+
+/** Live "working / idle / exited" totals; opens the overview. */
+function Counts({ now }: { now: number }): React.JSX.Element {
+  const sessions = useSessions((s) => s.sessions)
+  const overviewOpen = useSessions((s) => s.overviewOpen)
+  const toggleOverview = useSessions((s) => s.toggleOverview)
+  const counts = useMemo(() => {
+    const c = { busy: 0, idle: 0, exited: 0 }
+    for (const s of sessions) c[activityOf(s, now)]++
+    return c
+  }, [sessions, now])
+
+  return (
+    <button
+      className={`counts${overviewOpen ? ' on' : ''}`}
+      onClick={toggleOverview}
+      title="Session overview (Ctrl+Shift+O)"
+      aria-pressed={overviewOpen}
+    >
+      <span className={`count busy${counts.busy ? ' on' : ''}`}>
+        <span className="status-dot busy" />
+        {counts.busy} working
+      </span>
+      <span className={`count idle${counts.idle ? ' on' : ''}`}>
+        <span className="status-dot running" />
+        {counts.idle} idle
+      </span>
+      <span className="count exited">
+        <span className="status-dot exited" />
+        {counts.exited} exited
+      </span>
+    </button>
   )
 }
 

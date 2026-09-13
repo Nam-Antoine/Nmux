@@ -10,7 +10,8 @@ Two things are worth protecting:
    Claude fetches) can emit arbitrary text and escape sequences. If the
    renderer were ever compromised, it could ask the main process to spawn a
    shell and type into it, which is code execution as the user.
-2. **The main process runs unsandboxed** and owns every PTY.
+2. **The main process runs unsandboxed**, and the session daemon it talks to
+   owns every PTY.
 
 Out of scope: other users or malware already running on the same machine
 under the same account (they can already do everything Nmux can), and the
@@ -28,11 +29,12 @@ safety of Claude Code itself (its permission system is its own).
 | External links | Terminal links go to the OS browser only for `http:`, `https:`, `mailto:` and at most 2048 chars. `file:`, `ms-msdt:` and other protocol handlers are never invoked | `main/security.ts` |
 | Browser permissions | Request and check handlers deny everything except clipboard write/read; downloads are cancelled | `main/security.ts` |
 | IPC sender | Every channel verifies the sender is the **main frame** of our own renderer URL before doing anything | `main/ipc.ts` `isTrustedSender` |
-| IPC input | Session ids must be UUIDs; `cwd` must be an absolute existing directory; names ≤ 80 chars without control characters; ≤ 32 extra args of ≤ 512 chars; write chunks ≤ 1 MiB; cols/rows bounded; at most 64 sessions | `main/ipc.ts`, `shared/session.ts` `LIMITS` |
+| IPC input | Session ids must be UUIDs; `cwd` must be an absolute existing directory; names ≤ 80 chars without control characters; ≤ 32 extra args of ≤ 512 chars; write chunks ≤ 1 MiB; cols/rows bounded; at most 64 sessions. Applied in `ipc.ts` and again in the daemon | `daemon/validate.ts`, `shared/session.ts` `LIMITS` |
+| Daemon endpoint | Named pipe (`\\.\pipe\nmux-<hash of userData>`), never a TCP port. The first message must be `hello` with the 256-bit random token the daemon wrote to `daemon.json` (user-only: inherits the `%APPDATA%` ACL on Windows, mode 0600 elsewhere; new on every start); anything else closes the socket. Lines over 8 MiB drop the connection. `daemon.log` holds only lifecycle messages, never terminal output | `daemon/server.ts`, `daemon/index.ts` |
 | Preload surface | Exposes exactly `NmuxApi`. Event names are allow-listed; `ipcRenderer` itself is never exposed | `preload/index.ts` |
-| Child environment | Sessions inherit the user's environment minus `ELECTRON_*` and nested-Claude markers. No secrets are added | `main/sessions/launch.ts` |
-| Packaged binary (fuses) | `NODE_OPTIONS` ignored, `--inspect` ignored, cookie encryption on, ASAR integrity validated, app code loads only from ASAR, no file-protocol extra privileges. `RunAsNode` stays **on** because node-pty forks a helper with `ELECTRON_RUN_AS_NODE` (and the M2 daemon will) | `electron-builder.yml` |
-| Data at rest | `sessions.json` stores names, paths and session UUIDs only. Conversation content stays in Claude Code's own `~/.claude` | `main/store/SessionStore.ts` |
+| Child environment | Sessions inherit the user's environment minus `ELECTRON_*` and nested-Claude markers. No secrets are added | `daemon/sessions/launch.ts` |
+| Packaged binary (fuses) | `NODE_OPTIONS` ignored, `--inspect` ignored, cookie encryption on, ASAR integrity validated, app code loads only from ASAR, no file-protocol extra privileges. `RunAsNode` stays **on** because the daemon is `Nmux.exe` run with `ELECTRON_RUN_AS_NODE` (node-pty forks a helper the same way) | `electron-builder.yml` |
+| Data at rest | `sessions.json` stores names, paths and session UUIDs only. Conversation content stays in Claude Code's own `~/.claude` | `daemon/store/SessionStore.ts` |
 | Supply chain | 3 runtime dependencies (node-pty, @xterm/headless, @xterm/addon-serialize); lockfile committed; `pnpm audit` clean as of 2026-09-06 | `package.json` |
 
 ## Residual risks
@@ -46,7 +48,11 @@ safety of Claude Code itself (its permission system is its own).
   test depends on it.
 - **`RunAsNode` is on.** Anyone with the Nmux binary gets a Node runtime.
   That equals having `node.exe`, grants no extra privilege, and is required
-  by node-pty today.
+  by the daemon and by node-pty.
+- **The daemon is reachable by any process running as the user.** It can
+  read `daemon.json`, present the token and drive every session, which is
+  the same power such a process already has (it could run `claude` itself).
+  Other accounts on the machine cannot read the token.
 - **No code signing or auto-update yet** (Plan M4). SmartScreen will warn,
   and security fixes need a manual reinstall.
 - **Clickable links** are a phishing surface, as in any terminal. The scheme

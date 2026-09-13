@@ -15,43 +15,90 @@
  * Claude Code part (it launches the real CLI, which needs `claude` on PATH).
  */
 import { spawn } from 'node:child_process'
-import { mkdirSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { connect } from 'node:net'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 const outDir = join(root, '.smoke')
 const attachIndex = process.argv.indexOf('--attach')
-const port = attachIndex !== -1 ? Number(process.argv[attachIndex + 1]) : 9333
+let port = attachIndex !== -1 ? Number(process.argv[attachIndex + 1]) : 9333
 const skipClaude = process.env.NMUX_SMOKE_SKIP_CLAUDE === '1'
+/** A bit more than lib/activity.ts BUSY_MS, so "busy" has aged into "idle". */
+const BUSY_WAIT_MS = 5000
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
-const strip = (s) => s.replace(/\x1b\[[0-9;?]*[A-Za-z]|\x1b\][^\x07]*\x07|\x1b[()][A-Z0-9]/g, '')
+// Serialized screens encode runs of blank cells as "cursor forward" (CSI n C);
+// turn those back into spaces before dropping every other escape sequence.
+const strip = (s) =>
+  s
+    .replace(/\x1b\[(\d*)C/g, (_, n) => ' '.repeat(Number(n || 1)))
+    .replace(/\x1b\[[0-9;?]*[A-Za-z]|\x1b\][^\x07]*\x07|\x1b[()][A-Z0-9]/g, '')
 
 mkdirSync(outDir, { recursive: true })
 
 // ---- launch ----------------------------------------------------------------
 
-let child = null
-if (attachIndex === -1) {
+// --exe <path> runs a packaged binary (e.g. release/win-unpacked/Nmux.exe)
+// instead of the dev Electron + out/.
+const exeIndex = process.argv.indexOf('--exe')
+const exe = exeIndex !== -1 ? resolve(process.argv[exeIndex + 1]) : null
+// The dev build gets a fresh throwaway profile so an installed Nmux (and its
+// daemon) can keep running and no layout or session list leaks between runs.
+const ownProfile = attachIndex === -1 && !exe ? join(outDir, 'userData') : null
+
+function launchApp() {
   // A nested `claude` refuses to start if it inherits these from a parent
   // Claude Code session (the app strips them too; this covers the shell part).
   const env = { ...process.env }
   for (const k of Object.keys(env)) if (/^CLAUDE(CODE|_PID|_EFFORT|_CODE_)/.test(k)) delete env[k]
-  // --exe <path> runs a packaged binary (e.g. release/win-unpacked/Nmux.exe)
-  // instead of the dev Electron + out/.
-  const exeIndex = process.argv.indexOf('--exe')
-  const exe = exeIndex !== -1 ? resolve(process.argv[exeIndex + 1]) : null
   const electron = exe ?? join(root, 'node_modules', 'electron', 'dist', process.platform === 'win32' ? 'electron.exe' : 'electron')
-  // The dev build gets a fresh throwaway profile so an installed Nmux can keep
-  // running and no layout or session list leaks between runs.
-  if (!exe) {
-    env.NMUX_USER_DATA_DIR = join(outDir, 'userData')
-    rmSync(env.NMUX_USER_DATA_DIR, { recursive: true, force: true })
-  }
+  if (ownProfile) env.NMUX_USER_DATA_DIR = ownProfile
   const args = [`--remote-debugging-port=${port}`, ...(exe ? [] : [root])]
-  child = spawn(electron, args, { env, stdio: ['ignore', 'pipe', 'pipe'] })
-  child.stdout.on('data', (d) => process.stdout.write(`[electron] ${d}`))
-  child.stderr.on('data', (d) => process.stderr.write(`[electron] ${d}`))
+  const proc = spawn(electron, args, { env, stdio: ['ignore', 'pipe', 'pipe'] })
+  proc.stdout.on('data', (d) => {
+    if (/keeping the system awake/.test(String(d))) sawKeepAwake = true
+    process.stdout.write(`[electron] ${d}`)
+  })
+  proc.stderr.on('data', (d) => process.stderr.write(`[electron] ${d}`))
+  return proc
+}
+
+/** Tell the daemon behind a profile to stop every session and exit. */
+async function stopDaemon(userDataDir) {
+  const file = join(userDataDir, 'daemon.json')
+  if (!existsSync(file)) return
+  const { pipe, token } = JSON.parse(readFileSync(file, 'utf8'))
+  await new Promise((res) => {
+    const sock = connect(pipe, () => {
+      sock.write(JSON.stringify({ id: 1, method: 'hello', args: [token, 'smoke'] }) + '\n')
+      sock.write(JSON.stringify({ method: 'shutdown' }) + '\n')
+    })
+    const timer = setTimeout(() => {
+      sock.destroy()
+      res()
+    }, 5000)
+    sock.on('close', () => {
+      clearTimeout(timer)
+      res()
+    })
+    sock.on('error', () => {
+      clearTimeout(timer)
+      res()
+    })
+  })
+}
+
+let sawKeepAwake = false
+let child = null
+if (attachIndex === -1) {
+  if (ownProfile) {
+    rmSync(ownProfile, { recursive: true, force: true })
+    // "always" so the keep-awake check does not depend on the test machine's power source.
+    mkdirSync(ownProfile, { recursive: true })
+    writeFileSync(join(ownProfile, 'settings.json'), JSON.stringify({ keepAwake: 'always' }))
+  }
+  child = launchApp()
 }
 
 // ---- CDP client --------------------------------------------------------------
@@ -59,7 +106,10 @@ if (attachIndex === -1) {
 async function findPage() {
   for (let i = 0; i < 60; i++) {
     try {
-      const list = await (await fetch(`http://127.0.0.1:${port}/json`)).json()
+      // Bounded: a port whose listener is gone but whose socket handle was
+      // inherited by the detached daemon (dev builds only) accepts the TCP
+      // connection and then never answers.
+      const list = await (await fetch(`http://127.0.0.1:${port}/json`, { signal: AbortSignal.timeout(2000) })).json()
       const page = list.find((t) => t.type === 'page' && /^app:\/\/nmux\/|localhost|index\.html/.test(t.url))
       if (page) return page
     } catch {
@@ -70,25 +120,59 @@ async function findPage() {
   throw new Error(`no page target on port ${port}`)
 }
 
-const page = await findPage()
-const ws = new WebSocket(page.webSocketDebuggerUrl)
-await new Promise((res, rej) => {
-  ws.onopen = res
-  ws.onerror = rej
-})
+let ws = null
 let nextId = 0
 const pending = new Map()
-ws.onmessage = (e) => {
-  const m = JSON.parse(e.data)
-  const p = m.id && pending.get(m.id)
-  if (!p) return
-  pending.delete(m.id)
-  m.error ? p.rej(new Error(JSON.stringify(m.error))) : p.res(m.result)
+async function connectCdp() {
+  const page = await findPage()
+  ws = new WebSocket(page.webSocketDebuggerUrl)
+  await new Promise((res, rej) => {
+    ws.onopen = res
+    ws.onerror = rej
+  })
+  ws.onmessage = (e) => {
+    const m = JSON.parse(e.data)
+    const p = m.id && pending.get(m.id)
+    if (!p) return
+    pending.delete(m.id)
+    m.error ? p.rej(new Error(JSON.stringify(m.error))) : p.res(m.result)
+  }
+  // A dropped DevTools connection must fail the run, not hang it.
+  ws.onclose = (e) => {
+    for (const [id, p] of pending) {
+      pending.delete(id)
+      p.rej(new Error(`DevTools connection closed (code ${e.code})`))
+    }
+  }
+  await send('Runtime.enable')
+  // Wait for the page to commit and the preload bridge to be exposed.
+  let ready = false
+  for (let i = 0; i < 60 && !ready; i++) {
+    ready = await evaluate(`typeof window.nmux === 'object' && document.readyState === 'complete' && !!document.querySelector('.app')`).catch(() => false)
+    if (!ready) await sleep(500)
+  }
+  if (!ready) throw new Error('UI never became ready (window.nmux missing or app not rendered)')
+  await sleep(500)
 }
+const CDP_TIMEOUT_MS = 60_000
 const send = (method, params = {}) =>
   new Promise((res, rej) => {
     const id = ++nextId
-    pending.set(id, { res, rej })
+    const timer = setTimeout(() => {
+      if (!pending.has(id)) return
+      pending.delete(id)
+      rej(new Error(`DevTools call ${method} (id ${id}) got no reply in ${CDP_TIMEOUT_MS} ms`))
+    }, CDP_TIMEOUT_MS)
+    pending.set(id, {
+      res: (v) => {
+        clearTimeout(timer)
+        res(v)
+      },
+      rej: (e) => {
+        clearTimeout(timer)
+        rej(e)
+      }
+    })
     ws.send(JSON.stringify({ id, method, params }))
   })
 const evaluate = async (expression) => {
@@ -120,17 +204,10 @@ let failures = 0
 // ---- scenario ------------------------------------------------------------------
 
 try {
-  await send('Runtime.enable')
-  // Wait for the page to commit and the preload bridge to be exposed.
-  let ready = false
-  for (let i = 0; i < 60 && !ready; i++) {
-    ready = await evaluate(`typeof window.nmux === 'object' && document.readyState === 'complete' && !!document.querySelector('.app')`).catch(() => false)
-    if (!ready) await sleep(500)
-  }
-  if (!ready) throw new Error('UI never became ready (window.nmux missing or app not rendered)')
-  await sleep(500)
+  await connectCdp()
   const info = await evaluate('window.nmux.app.info()')
-  console.log('app', info.version, 'claude:', info.claudeBinary ?? 'NOT FOUND')
+  console.log('app', info.version, 'claude:', info.claudeBinary ?? 'NOT FOUND', 'daemon pid:', info.daemonPid)
+  check(typeof info.daemonPid === 'number' && info.daemonPid > 0 && (!child || info.daemonPid !== child.pid), 'sessions live in a separate daemon process')
   await screenshot('01-empty.png')
 
   // --- security controls ---------------------------------------------------------
@@ -166,6 +243,7 @@ try {
   const shellAttach = await evaluate(`window.nmux.sessions.attach(${JSON.stringify(shell.id)})`)
   check(shellAttach.snapshot.includes('NMUX_SMOKE_OK'), `shell output visible in attach snapshot (${shellAttach.cols}x${shellAttach.rows}, seq ${shellAttach.seq})`)
   check(shellAttach.cols > 80 && shellAttach.rows > 20, 'terminal was fitted to the pane')
+  if (ownProfile) check(sawKeepAwake, 'keep-awake engaged once a session produced output')
 
   // --- sidebar: folder groups ------------------------------------------------------
   const folderTitle = await evaluate(`document.querySelector('.folder-header')?.title ?? null`)
@@ -208,6 +286,23 @@ try {
   await sleep(500)
   check((await evaluate(`document.querySelectorAll('.cell').length === 1 && !!document.querySelector('.cell .terminal-pane') && !document.querySelector('.workspace.multi')`)) === true, 'back to a single pane with the session in it')
 
+  // --- overview + activity ---------------------------------------------------------
+  await evaluate(`window.nmux.sessions.write(${JSON.stringify(shell.id)}, 'echo NMUX_BUSY_PING\\r')`)
+  await sleep(600)
+  check((await evaluate(`!!document.querySelector('.statusbar .status-dot.busy')`)) === true, 'status bar shows the shell as working right after output')
+  await evaluate(`window.dispatchEvent(new KeyboardEvent('keydown', { key: 'O', ctrlKey: true, shiftKey: true }))`)
+  await sleep(400)
+  check((await evaluate(`!!document.querySelector('.overview')`)) === true, 'Ctrl+Shift+O opens the overview')
+  check((await evaluate(`document.querySelectorAll('.overview .session-card').length`)) === 1, 'overview shows one card per session')
+  const cardText = await evaluate(`document.querySelector('.overview .session-card[data-session=${JSON.stringify(shell.id)}]')?.textContent ?? ''`)
+  check(/smoke-shell/.test(cardText) && /working|idle/.test(cardText), `card names the session and its state (${cardText.slice(0, 60)})`)
+  await screenshot('02d-overview.png')
+  await sleep(BUSY_WAIT_MS)
+  check((await evaluate(`document.querySelector('.overview .session-card').classList.contains('idle')`)) === true, 'card turns idle once output stops')
+  await evaluate(`document.querySelector('.overview .session-card').click()`)
+  await sleep(300)
+  check((await evaluate(`!document.querySelector('.overview') && !!document.querySelector('.cell .terminal-pane')`)) === true, 'clicking a card opens the session and closes the overview')
+
   // --- exited sessions keep their last screen -------------------------------------
   // Tested on a shell (normal buffer) rather than a killed Claude TUI, whose
   // alt-screen may be restored on exit.
@@ -242,8 +337,12 @@ try {
     await clickSession('smoke-claude-skip')
     await sleep(9000)
     await screenshot('03b-claude-skip.png')
-    const skipAttach = await evaluate(`window.nmux.sessions.attach(${JSON.stringify(skip.id)})`)
-    const skipScreen = strip(skipAttach.snapshot)
+    // The footer line lands a moment after the banner; poll the snapshot for it.
+    let skipScreen = ''
+    for (let i = 0; i < 20 && !/bypass permissions/i.test(skipScreen); i++) {
+      skipScreen = strip((await evaluate(`window.nmux.sessions.attach(${JSON.stringify(skip.id)})`)).snapshot)
+      if (!/bypass permissions/i.test(skipScreen)) await sleep(500)
+    }
     check(/bypass permissions/i.test(skipScreen), 'claude reports bypass-permissions mode (flag was passed)')
     check((await evaluate(`[...document.querySelectorAll('.session-item .tag.warn')].length`)) === 1, 'sidebar tags the skip-permissions session')
     check((await evaluate(`document.querySelectorAll('.folder-header').length`)) === 1, 'all three sessions share one folder group')
@@ -289,6 +388,34 @@ try {
   } else {
     console.log('skipping Claude part')
   }
+
+  // --- tmux semantics: sessions outlive the app ---------------------------------------
+  if (child) {
+    const before = (await evaluate('window.nmux.sessions.list()')).find((s) => s.id === shell.id)
+    ws.close()
+    // Hard kill, as if the app crashed. The daemon and its PTYs must not notice.
+    const exited = new Promise((r) => child.once('exit', r))
+    child.kill()
+    await exited
+    // Windows keeps the old DevTools port bound for a while; take the next one.
+    port += 1
+    await sleep(1000)
+    child = launchApp()
+    await connectCdp()
+    const infoAfter = await evaluate('window.nmux.app.info()')
+    check(infoAfter.daemonPid === info.daemonPid, `relaunched app attached to the same daemon (pid ${infoAfter.daemonPid})`)
+    const after = (await evaluate('window.nmux.sessions.list()')).find((s) => s.id === shell.id)
+    check(after && after.status === 'running' && after.pid === before.pid, `shell session survived the app restart (pid ${after?.pid})`)
+    await clickSession('smoke-shell')
+    await sleep(1500)
+    const survived = await evaluate(`window.nmux.sessions.attach(${JSON.stringify(shell.id)})`)
+    check(survived.snapshot.includes('NMUX_SMOKE_OK'), 'its screen came back after reattach')
+    await evaluate(`window.nmux.sessions.write(${JSON.stringify(shell.id)}, 'echo NMUX_AFTER_RESTART\\r')`)
+    await sleep(2000)
+    const live = await evaluate(`window.nmux.sessions.attach(${JSON.stringify(shell.id)})`)
+    check(live.snapshot.includes('NMUX_AFTER_RESTART'), 'and it still accepts input')
+    await screenshot('07-after-restart.png')
+  }
 } finally {
   // Always clean up what we created, even on failure.
   try {
@@ -300,10 +427,15 @@ try {
     console.error('cleanup failed:', err)
     failures++
   }
-  ws.close()
+  ws?.close()
   if (child) {
     await sleep(500)
     child.kill()
+  }
+  // The throwaway profile's daemon must not outlive the test.
+  if (ownProfile) {
+    await stopDaemon(ownProfile)
+    check(!existsSync(join(ownProfile, 'daemon.json')), 'daemon stopped and cleaned up daemon.json')
   }
 }
 

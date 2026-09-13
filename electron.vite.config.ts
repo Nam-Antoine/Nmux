@@ -11,9 +11,19 @@ export default defineConfig({
   //   - @xterm/headless + @xterm/addon-serialize: their package.json `module`
   //     field points at a missing file, which breaks Vite's resolver. Node's
   //     `require` uses `main`, which is correct, so they are kept external.
+  // Two entries: the Electron main process and the session daemon, which the
+  // main process runs as a detached plain-Node child (out/main/daemon.js).
   main: {
     plugins: [externalizeDepsPlugin()],
-    resolve: { alias: { '@shared': shared } }
+    resolve: { alias: { '@shared': shared } },
+    build: {
+      rollupOptions: {
+        input: {
+          index: resolve('src/main/index.ts'),
+          daemon: resolve('src/daemon/index.ts')
+        }
+      }
+    }
   },
   // Preload: runs sandboxed. Must be self-contained, so shared code is bundled in.
   preload: {

@@ -21,8 +21,9 @@ asarUnpack:
   - node_modules/node-pty/**
 
 # Electron fuses: build-time switches baked into the binary.
-#   runAsNode stays ON because node-pty forks a helper process with
-#   ELECTRON_RUN_AS_NODE, and the M2 daemon will use the same mechanism.
+#   runAsNode stays ON because the session daemon (out/main/daemon.js) runs as
+#   `Nmux.exe` with ELECTRON_RUN_AS_NODE=1, and node-pty forks a helper the
+#   same way.
 electronFuses:
   runAsNode: true
   enableCookieEncryption: true

@@ -1,24 +1,32 @@
 # Nmux Architecture
 
 Nmux is a desktop home for Claude Code. It runs `claude` (and plain shells) in
-real pseudo-terminals that belong to Nmux, not to an editor. Closing the window
-hides it to the system tray; every process keeps running. Because Nmux owns the
-Claude session ID, a conversation can be resumed after Nmux itself restarts.
+real pseudo-terminals that belong to Nmux, not to an editor. The terminals
+live in a small daemon process, like a tmux server: closing the window hides
+the app to the tray, quitting the app detaches from the daemon, and the next
+launch reattaches to whatever is still running. Because Nmux owns the Claude
+session ID, a conversation can also be resumed after the daemon itself stops.
 
 ## 1. Process model
 
 ```
-┌─ Electron main process ──────────────────────────────────────────────────────┐
-│                                                                              │
-│  index.ts        bootstrap · single instance · quit flow                     │
+┌─ Session daemon (plain Node: Nmux.exe with ELECTRON_RUN_AS_NODE=1) ──────────┐
+│  daemon/index.ts   entry · daemon.json (pid, pipe, token) · idle exit        │
+│  ├─ server.ts      named-pipe server, token check + validation ◄────────────┼─┐
+│  ├─ sessions/      SessionManager ─► PtySession ─► node-pty ─► claude.exe   │ │
+│  │                 (no Electron imports)     └─► @xterm/headless (screen)   │ │
+│  └─ store/         SessionStore  → %APPDATA%/nmux/sessions.json             │ │
+└─────────────────────────────────────────────────────────────────────────────┘ │
+                                                     newline-delimited JSON over │
+                                                     \\.\pipe\nmux-<hash>        │
+┌─ Electron main process ──────────────────────────────────────────────────────┐ │
+│  index.ts        bootstrap · single instance · quit flow                     │ │
+│  ├─ daemon/client.ts  finds or spawns the daemon, reconnects, proxies calls ─┼─┘
 │  ├─ window.ts    BrowserWindow, hide-on-close (never quits on close)         │
-│  ├─ tray.ts      tray icon, "Show" / "Quit"                                  │
+│  ├─ tray.ts      "Show" / "Quit" (detach) / "Quit and stop all sessions"     │
 │  ├─ protocol.ts  serves the UI from app://nmux/ (real origin, strict CSP)    │
 │  ├─ security.ts  navigation / permission / external-link lockdown            │
-│  ├─ ipc.ts       ipcMain adapter, sender check + validation ◄─ window.nmux ◄┐ │
-│  └─ sessions/    SessionManager ─► PtySession ─► node-pty ─► claude.exe   │  │
-│                  (no Electron imports)     └─► @xterm/headless (screen)   │  │
-│     store/       SessionStore  → %APPDATA%/nmux/sessions.json             │  │
+│  └─ ipc.ts       ipcMain adapter, sender check + validation ◄─ window.nmux ◄┐ │
 └───────────────────────────────────────────────────────────────────────────┼──┘
                                                                             │
 ┌─ Preload (sandboxed) ──────────────────────────────────────────────────────┼──┐
@@ -31,18 +39,34 @@ Claude session ID, a conversation can be resumed after Nmux itself restarts.
 └──────────────────────────────────────────────────────────────────────────────┘
 ```
 
-Three processes, one direction of trust: the renderer can only call what the
+Four processes, one direction of trust: the renderer can only call what the
 preload exposes; the preload only forwards to channels listed in
-`src/shared/ipc.ts`; the main process validates every argument in `ipc.ts`.
+`src/shared/ipc.ts`; the main process validates every argument in `ipc.ts`
+and forwards it to the daemon, which checks the connection token and
+validates again in `server.ts`.
+
+**Daemon lifecycle.** On startup the app reads `<userData>/daemon.json`,
+connects to the pipe it names and sends `hello` with the token. If there is
+no daemon (no file, or the pipe is dead) it spawns `out/main/daemon.js` as a
+detached child of its own binary and polls until the daemon rewrites
+`daemon.json` with its pid. The daemon exits when told to (`shutdown`, from
+"Quit and stop all sessions"), or on its own once no client is attached and
+no session is running, so nothing lingers after a clean quit. A daemon from
+an older Nmux is replaced on connect only if it has nothing running;
+otherwise it is kept so an upgrade never kills live sessions. If the
+connection drops the client reconnects (or respawns) with backoff and pushes
+the daemon's session list to the UI.
 
 ## 2. Layers and their rules
 
 | Layer                | Path                       | May import                     | Rule |
 | -------------------- | -------------------------- | ------------------------------ | ---- |
-| Shared contract      | `src/shared/`              | nothing                        | Types and channel names only. Single source of truth for main ↔ renderer. |
-| Session engine       | `src/main/sessions/`       | node, node-pty, xterm headless | **No Electron.** This is the future daemon. |
-| Persistence          | `src/main/store/`          | node                           | Atomic JSON writes. |
-| Electron adapter     | `src/main/ipc.ts`          | electron, sessions             | Only file that knows both `ipcMain` and `SessionManager`. |
+| Shared contract      | `src/shared/`              | nothing                        | Types, channel names and the daemon wire protocol. Single source of truth. |
+| Session engine       | `src/daemon/sessions/`     | node, node-pty, xterm headless | **No Electron.** |
+| Persistence          | `src/daemon/store/`        | node                           | Atomic JSON writes. |
+| Daemon               | `src/daemon/{index,server,validate,endpoint,framing}.ts` | node, sessions | **No Electron.** Runs as a plain Node process. Owns the token check and input validation. |
+| Daemon client        | `src/main/daemon/client.ts` | node, shared, daemon/{endpoint,framing} | Spawn, connect, reconnect, typed `call` / `notify`. |
+| Electron adapter     | `src/main/ipc.ts`          | electron, daemon client, validate | Only file that knows both `ipcMain` and the daemon client. |
 | Shell                | `src/main/{index,window,tray,paths}.ts` | electron          | App lifecycle. No session logic. |
 | Bridge               | `src/preload/`             | electron, shared               | Exposes `NmuxApi`, nothing else. |
 | UI                   | `src/renderer/`            | react, xterm, shared           | Talks to main only through `api.ts`. |
@@ -55,7 +79,8 @@ preload exposes; the preload only forwards to channels listed in
 node-pty onData
   → PtySession: seq++, headless term.write(chunk, cb: parsedSeq = seq), emit('data', chunk, seq)
   → SessionManager emit('data', id, chunk, seq)
-  → ipc.ts broadcast 'ev:data' to every window
+  → daemon server.ts writes {"event":"data",...} to every attached client
+  → main daemon/client.ts emit('data') → ipc.ts broadcast 'ev:data' to every window
   → preload → renderer lib/ptyStream.ts routes by session id
   → TerminalPane xterm.write(chunk)
 ```
@@ -64,11 +89,12 @@ node-pty onData
 
 ```
 xterm onData → api.sessions.write(id, data) → ipcRenderer.send('sessions:write')
-  → ipcMain.on → SessionManager.write → PtySession.write → node-pty
+  → ipcMain.on → client.notify('write') → pipe → server.ts → SessionManager.write
+  → PtySession.write → node-pty
 ```
 
-Input and resize use fire-and-forget `send`, not `invoke`: no round trip on
-the hot path.
+Input and resize use fire-and-forget messages end to end (`send` on IPC, a
+request without `id` on the pipe): no round trip on the hot path.
 
 **Attach (UI (re)binds to a live process)**
 
@@ -99,8 +125,10 @@ never get told they are two columns wide.
 create ─────► running ──(process exit)──► exited ──(restart)──► running
                                             │
                                             └──(remove)──► gone
-app start : every persisted session loads as `exited` (no live process yet)
-app quit  : every process is killed, statuses persisted as `exited`
+daemon start : every persisted session loads as `exited` (no live process yet)
+app start    : attach to the daemon; whatever it has running is still running
+app quit     : detach only. Sessions keep running in the daemon
+"Quit and stop all sessions" : daemon kills every process, persists `exited`, exits
 ```
 
 `restart` means:
@@ -162,10 +190,15 @@ Full threat model and control table: [SECURITY.md](./SECURITY.md). In short:
    Ink UI. A headless terminal keeps real screen state and serializes it
    cleanly. VS Code does the same for terminal reconnection.
 
-3. **Sessions live in the main process for v1.** Hide-to-tray already gives
-   "close the window, keep working". A separate daemon (survive UI crashes and
-   restarts) is Milestone 2 in `PLAN.md`; the `sessions/` package has no
-   Electron imports so that split is a transport change, not a rewrite.
+3. **Sessions live in a daemon, not in the main process.** That is what
+   makes Nmux behave like tmux: the UI can crash, be updated or be quit and
+   the processes carry on. The daemon is the same `Nmux.exe` run with
+   `ELECTRON_RUN_AS_NODE=1`, so node-pty's native binary and the ABI are
+   shared and nothing extra ships. Transport is a named pipe with a random
+   per-start token in `daemon.json` (Unix socket on other platforms), chosen
+   over a TCP port so nothing listens on the network at all. The trade-off
+   is that the daemon holds `Nmux.exe` open: the installer stops it (and its
+   sessions) before upgrading, exactly as before the split.
 
 4. **One xterm per session, kept mounted.** Switching sessions toggles
    `hidden`; nothing is torn down, so switching is instant and selection,
@@ -179,7 +212,22 @@ Full threat model and control table: [SECURITY.md](./SECURITY.md). In short:
 
 ## 9. Known limitations (v1)
 
-- Sessions die when Nmux quits (not when the window closes). See M2.
+- Sessions survive the app, not the machine: a reboot, logout or installer
+  run stops the daemon. Claude sessions can be resumed afterwards. Lock
+  screen changes nothing; sleep and hibernate pause every process and the
+  sessions continue after wake. While a session is producing output the app
+  holds a `powerSaveBlocker` (`main/keepAwake.ts`, mode in `settings.json`)
+  so the idle timer does not put a locked laptop to sleep mid-task; a manual
+  sleep or lid close is not overridden, and the blocker needs the app to be
+  running (in the tray), not only the daemon.
+- Every attached client receives every session's output; a client that
+  wants one session (a future CLI `nmux attach`) filters on its side.
+- On Windows a spawned child inherits every inheritable handle of its parent
+  (libuv passes `bInheritHandles=TRUE`). The daemon therefore keeps a copy of
+  the app's `--remote-debugging-port` socket in dev runs, so that port stays
+  bound until the daemon exits; the smoke test relaunches on the next port.
+  Packaged builds open no such socket. Chromium's own files, pipes and the
+  single-instance mutex are non-inheritable and are not affected.
 - Windows only has been exercised. macOS/Linux should work (`shellLaunch`
   branches on platform) but are untested.
 - No split panes or tabs-within-a-session yet.
@@ -196,6 +244,7 @@ Full threat model and control table: [SECURITY.md](./SECURITY.md). In short:
 
 `pnpm smoke` builds, launches the real app with DevTools enabled, creates a
 shell and a Claude Code session, checks the attach snapshot contains the
-expected output, screenshots each state into `.smoke/`, and removes what it
-created. Use `node scripts/smoke.mjs --attach 9333` against
+expected output, screenshots each state into `.smoke/`, hard-kills the app
+and relaunches it to prove the sessions survived in the daemon, removes what
+it created and stops the test profile's daemon. Use `node scripts/smoke.mjs --attach 9333` against
 `pnpm dev -- --remote-debugging-port=9333` to test the dev build.
