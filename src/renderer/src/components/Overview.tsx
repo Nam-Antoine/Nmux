@@ -5,12 +5,11 @@
  */
 import { useEffect, useMemo } from 'react'
 import type { SessionMeta } from '@shared/session'
-import { activityOf, ago, duration, lastOutput, useNow, type Activity } from '../lib/activity'
+import { activityOf, ago, duration, lastOutput, useNow } from '../lib/activity'
 import { groupByFolder } from '../lib/folders'
 import { useSessions } from '../store/sessions'
 import { kindLabel, restartLabel } from '../lib/sessionKind'
 
-const LABEL: Record<Activity, string> = { busy: 'working', idle: 'idle', exited: 'exited' }
 
 export function Overview(): React.JSX.Element {
   const sessions = useSessions((s) => s.sessions)
@@ -22,7 +21,7 @@ export function Overview(): React.JSX.Element {
   const groups = useMemo(() => groupByFolder(sessions), [sessions])
   const counts = useMemo(() => {
     const c = { busy: 0, idle: 0, exited: 0 }
-    for (const s of sessions) c[activityOf(s, now)]++
+    for (const s of sessions) c[activityOf(s)]++
     return c
   }, [sessions, now])
 
@@ -93,12 +92,12 @@ function SessionCard({ session, active, now }: { session: SessionMeta; active: b
   const kill = useSessions((s) => s.kill)
   const remove = useSessions((s) => s.remove)
 
-  const activity = activityOf(session, now)
+  const activity = activityOf(session)
   const running = session.status === 'running'
   const last = lastOutput(session.id)
 
   const statusLine = (): string => {
-    if (activity === 'busy') return 'working · output just now'
+    if (activity === 'busy') return 'working'
     if (activity === 'idle') return last ? `idle · last output ${ago(now - last)}` : 'idle · no output yet'
     const code = session.exitCode
     return `exited${code !== undefined ? ` · code ${code}` : ''} · ${ago(now - session.lastActiveAt)}`
@@ -125,7 +124,6 @@ function SessionCard({ session, active, now }: { session: SessionMeta; active: b
           {activity === 'busy' && <span className="spinner" aria-hidden />}
           {session.name}
         </span>
-        <span className={`tag${running ? ' ok' : ''}`}>{LABEL[activity]}</span>
       </div>
       <div className={`card-status ${activity}`}>{statusLine()}</div>
       <div className="card-meta">

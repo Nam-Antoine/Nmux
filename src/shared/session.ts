@@ -48,6 +48,8 @@ export interface SessionMeta {
   cloudSessionId?: string
   /** claude.ai page for the cloud session, when the CLI printed one. */
   cloudUrl?: string
+  /** `kind === 'claude'`: cloud session this conversation was teleported from. */
+  teleportedFrom?: string
   /**
    * One-line message from Nmux about the last start, e.g. why a resume became
    * a fresh conversation. Cleared on the next start.
@@ -56,6 +58,11 @@ export interface SessionMeta {
   createdAt: number
   lastActiveAt: number
   status: SessionStatus
+  /**
+   * Claude is in the middle of a turn, read from the spinner Claude Code puts
+   * in the terminal title. Never set for shells.
+   */
+  working?: boolean
   exitCode?: number
   pid?: number
 }
@@ -73,6 +80,11 @@ export interface CreateSessionRequest {
   cloudTask?: string
   /** `kind === 'cloud'`: attach to an existing cloud session (id or claude.ai/code URL) instead. */
   attachCloudSession?: string
+  /**
+   * `kind === 'claude'`: start by teleporting this cloud session (id or URL)
+   * into a local conversation, `claude --teleport <id> --session-id <uuid>`.
+   */
+  teleportCloudSession?: string
 }
 
 /** Screen snapshot returned when the UI attaches to a session. */

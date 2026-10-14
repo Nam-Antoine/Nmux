@@ -6,14 +6,14 @@
  * sleep. A manual sleep, hibernate or lid close is not overridden; those
  * pause every process and the sessions resume after wake.
  *
- * "Busy" means some running session produced output recently. Claude Code
- * redraws its spinner while it works, so output is a reliable signal; a
- * shell sitting at a prompt does not keep the machine awake.
+ * "Busy" means some Claude session is in the middle of a turn (the daemon
+ * reads that from Claude Code's title spinner), or was a short while ago.
+ * Shells never keep the machine awake.
  */
 import { powerMonitor, powerSaveBlocker } from 'electron'
 import type { KeepAwakeMode } from './settings'
 
-/** No output for this long means the sessions are idle. */
+/** Stay awake this long after the last turn ended, so back-to-back turns don't flap. */
 const BUSY_WINDOW_MS = 3 * 60_000
 const TICK_MS = 15_000
 
@@ -25,7 +25,8 @@ export interface KeepAwakeOptions {
 }
 
 export class KeepAwake {
-  private lastOutputAt = 0
+  private working = false
+  private lastWorkingAt = 0
   private blockerId: number | null = null
   private timer: NodeJS.Timeout | null = null
 
@@ -41,15 +42,18 @@ export class KeepAwake {
     return this.blockerId !== null && powerSaveBlocker.isStarted(this.blockerId)
   }
 
-  /** A running session produced output. */
-  noteActivity(): void {
-    this.lastOutputAt = Date.now()
-    if (!this.active) this.evaluate()
+  /** Whether any session is working right now. Call on every session list change. */
+  setWorking(working: boolean): void {
+    if (working === this.working) return
+    this.working = working
+    this.lastWorkingAt = Date.now()
+    this.evaluate()
   }
 
   /** Nothing is running any more: release immediately. */
   noteIdle(): void {
-    this.lastOutputAt = 0
+    this.working = false
+    this.lastWorkingAt = 0
     this.evaluate()
   }
 
@@ -65,7 +69,7 @@ export class KeepAwake {
   }
 
   private evaluate(): void {
-    const busy = Date.now() - this.lastOutputAt < BUSY_WINDOW_MS
+    const busy = this.working || Date.now() - this.lastWorkingAt < BUSY_WINDOW_MS
     const mode = this.opts.mode()
     const allowed = mode === 'always' || (mode === 'plugged-in' && !powerMonitor.isOnBatteryPower())
     if (busy && allowed) this.start()

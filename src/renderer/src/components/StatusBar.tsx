@@ -6,7 +6,7 @@ export function StatusBar(): React.JSX.Element {
   const session = useSessions((s) => s.sessions.find((x) => x.id === s.activeId))
   const [copied, setCopied] = useState(false)
   const now = useNow(1000)
-  const activity = session ? activityOf(session, now) : null
+  const activity = session ? activityOf(session) : null
   const last = session ? lastOutput(session.id) : undefined
 
   const copyResume = (): void => {
@@ -64,7 +64,7 @@ function Counts({ now }: { now: number }): React.JSX.Element {
   const toggleOverview = useSessions((s) => s.toggleOverview)
   const counts = useMemo(() => {
     const c = { busy: 0, idle: 0, exited: 0 }
-    for (const s of sessions) c[activityOf(s, now)]++
+    for (const s of sessions) c[activityOf(s)]++
     return c
   }, [sessions, now])
 

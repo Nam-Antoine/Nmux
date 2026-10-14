@@ -25,8 +25,6 @@ const outDir = join(root, '.smoke')
 const attachIndex = process.argv.indexOf('--attach')
 let port = attachIndex !== -1 ? Number(process.argv[attachIndex + 1]) : 9333
 const skipClaude = process.env.NMUX_SMOKE_SKIP_CLAUDE === '1'
-/** A bit more than lib/activity.ts BUSY_MS, so "busy" has aged into "idle". */
-const BUSY_WAIT_MS = 5000
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
 // Serialized screens encode runs of blank cells as "cursor forward" (CSI n C);
 // turn those back into spaces before dropping every other escape sequence.
@@ -226,6 +224,7 @@ try {
   await expectReject('rejects a cloud task that looks like a flag', `window.nmux.sessions.create({ kind: 'cloud', cwd: ${JSON.stringify(root)}, cloudTask: '--help' })`)
   await expectReject('rejects a non-claude.ai cloud URL', `window.nmux.sessions.create({ kind: 'cloud', cwd: ${JSON.stringify(root)}, attachCloudSession: 'https://example.com/code/session_0123456789' })`)
   await expectReject('rejects non-uuid id', `window.nmux.sessions.attach('../etc/passwd')`)
+  await expectReject('rejects teleport into a shell', `window.nmux.sessions.create({ kind: 'shell', cwd: ${JSON.stringify(root)}, teleportCloudSession: 'session_0123456789' })`)
   await expectReject('rejects non-boolean skipPermissions', `window.nmux.sessions.create({ kind: 'claude', cwd: ${JSON.stringify(root)}, skipPermissions: 'yes' })`)
   await expectReject('rejects unknown event', `window.nmux.on('__proto__', () => {})`)
   const before = await evaluate('location.href')
@@ -246,7 +245,7 @@ try {
   const shellAttach = await evaluate(`window.nmux.sessions.attach(${JSON.stringify(shell.id)})`)
   check(shellAttach.snapshot.includes('NMUX_SMOKE_OK'), `shell output visible in attach snapshot (${shellAttach.cols}x${shellAttach.rows}, seq ${shellAttach.seq})`)
   check(shellAttach.cols > 80 && shellAttach.rows > 20, 'terminal was fitted to the pane')
-  if (ownProfile) check(sawKeepAwake, 'keep-awake engaged once a session produced output')
+  if (ownProfile) check(!sawKeepAwake, 'shell output alone does not keep the system awake')
 
   // --- sidebar: folder groups ------------------------------------------------------
   const folderTitle = await evaluate(`document.querySelector('.folder-header')?.title ?? null`)
@@ -296,21 +295,16 @@ try {
   // --- overview + activity ---------------------------------------------------------
   await evaluate(`window.nmux.sessions.write(${JSON.stringify(shell.id)}, 'echo NMUX_BUSY_PING\\r')`)
   await sleep(600)
-  check((await evaluate(`!!document.querySelector('.statusbar .status-dot.busy')`)) === true, 'status bar shows the shell as working right after output')
-  check(
-    (await evaluate(`(() => { const el = document.querySelector('.sidebar .session-name.working'); if (!el) return 'no-working-label'; if (!el.querySelector('.spinner')) return 'no-spinner'; const cs = getComputedStyle(el); return cs.animationName !== 'none' && cs.color !== 'rgba(0, 0, 0, 0)' ? 'ok' : 'anim=' + cs.animationName + ' color=' + cs.color })()`)) === 'ok',
-    'sidebar label animates while the session is working'
-  )
-  await screenshot('02d0-working-label.png')
+  check((await evaluate(`!document.querySelector('.statusbar > .status-dot.busy') && !document.querySelector('.sidebar .session-name.working')`)) === true, 'shell output does not count as working')
+  check((await evaluate(`document.querySelectorAll('.sidebar .session-item .tag:not(.warn)').length`)) === 0, 'sidebar shows no working/idle tags')
   await evaluate(`window.dispatchEvent(new KeyboardEvent('keydown', { key: 'O', ctrlKey: true, shiftKey: true }))`)
   await sleep(400)
   check((await evaluate(`!!document.querySelector('.overview')`)) === true, 'Ctrl+Shift+O opens the overview')
   check((await evaluate(`document.querySelectorAll('.overview .session-card').length`)) === 1, 'overview shows one card per session')
   const cardText = await evaluate(`document.querySelector('.overview .session-card[data-session=${JSON.stringify(shell.id)}]')?.textContent ?? ''`)
-  check(/smoke-shell/.test(cardText) && /working|idle/.test(cardText), `card names the session and its state (${cardText.slice(0, 60)})`)
+  check(/smoke-shell/.test(cardText) && /idle/.test(cardText), `card names the session and its state (${cardText.slice(0, 60)})`)
   await screenshot('02d-overview.png')
-  await sleep(BUSY_WAIT_MS)
-  check((await evaluate(`document.querySelector('.overview .session-card').classList.contains('idle')`)) === true, 'card turns idle once output stops')
+  check((await evaluate(`document.querySelector('.overview .session-card').classList.contains('idle')`)) === true, 'shell card is idle')
   await evaluate(`document.querySelector('.overview .session-card').click()`)
   await sleep(300)
   check((await evaluate(`!document.querySelector('.overview') && !!document.querySelector('.cell .terminal-pane')`)) === true, 'clicking a card opens the session and closes the overview')
@@ -370,7 +364,29 @@ try {
     }
     // A conversation with a message resumes with its history.
     await evaluate(`window.nmux.sessions.write(${JSON.stringify(claude.id)}, 'reply with exactly the word pong\\r')`)
-    await sleep(15000)
+    const workingOf = async () => (await evaluate('window.nmux.sessions.list()')).find((s) => s.id === claude.id)?.working === true
+    let sawWorking = false
+    for (let i = 0; i < 40 && !sawWorking; i++) {
+      sawWorking = await workingOf()
+      if (sawWorking) {
+        await clickSession('smoke-claude')
+        await sleep(200)
+        check(
+          (await evaluate(`(() => { const el = document.querySelector('.sidebar .session-name.working'); if (!el) return 'no-working-label'; if (!el.querySelector('.spinner')) return 'no-spinner'; const cs = getComputedStyle(el); return cs.animationName !== 'none' ? 'ok' : 'anim=' + cs.animationName })()`)) === 'ok',
+          'sidebar label animates while Claude is working'
+        )
+        await screenshot('02d0-working-label.png')
+      } else await sleep(250)
+    }
+    check(sawWorking, 'claude session is marked working during its turn')
+    let doneWorking = false
+    for (let i = 0; i < 60 && !doneWorking; i++) {
+      doneWorking = !(await workingOf())
+      if (!doneWorking) await sleep(500)
+    }
+    check(doneWorking, 'and idle again once the turn ends')
+    if (ownProfile) check(sawKeepAwake, 'keep-awake engaged while Claude was working')
+    await sleep(2000)
     await evaluate(`window.nmux.sessions.kill(${JSON.stringify(claude.id)})`)
     await waitExit(claude.id)
     const resumed = await evaluate(`window.nmux.sessions.restart(${JSON.stringify(claude.id)})`)
@@ -393,6 +409,36 @@ try {
     const freshMeta = (await evaluate(`window.nmux.sessions.list()`)).find((s) => s.id === skip.id)
     check(freshMeta.status === 'running', 'fresh conversation is running (not exit code 1)')
     check((await evaluate(`!!document.querySelector('.terminal-pane:not([hidden]) .terminal-notice')`)) === true, 'pane shows the notice')
+
+    // --- teleport (opt-in: needs a real cloud session and a trusted scratch folder) ---
+    // NMUX_SMOKE_TELEPORT=session_... NMUX_SMOKE_TELEPORT_DIR=<folder that is NOT a repo you care about>
+    const teleportId = process.env.NMUX_SMOKE_TELEPORT
+    const teleportDir = process.env.NMUX_SMOKE_TELEPORT_DIR
+    if (teleportId && teleportDir) {
+      const tp = await evaluate(`window.nmux.sessions.create({ kind: 'claude', cwd: ${JSON.stringify(teleportDir)}, name: 'smoke-teleport', teleportCloudSession: ${JSON.stringify(teleportId)} })`)
+      check(tp.status === 'running' && tp.teleportedFrom === teleportId, 'teleport session spawned')
+      await clickSession('smoke-teleport')
+      let tpScreen = ''
+      for (let i = 0; i < 60 && !/Session resumed/.test(tpScreen); i++) {
+        await sleep(500)
+        tpScreen = strip((await evaluate(`window.nmux.sessions.attach(${JSON.stringify(tp.id)})`)).snapshot)
+      }
+      await screenshot('08-teleport.png')
+      check(/Session resumed/.test(tpScreen), 'teleport brought the cloud conversation in')
+      // Keys typed while teleport is still settling are dropped.
+      await sleep(6000)
+      await evaluate(`window.nmux.sessions.write(${JSON.stringify(tp.id)}, 'reply with exactly the word pong\\r')`)
+      await sleep(15000)
+      await evaluate(`window.nmux.sessions.kill(${JSON.stringify(tp.id)})`)
+      await waitExit(tp.id)
+      const tpResumed = await evaluate(`window.nmux.sessions.restart(${JSON.stringify(tp.id)})`)
+      check(tpResumed.status === 'running' && !tpResumed.notice && tpResumed.claudeSessionId === tp.claudeSessionId, 'teleported conversation resumes with its own id')
+      await sleep(9000)
+      await screenshot('08b-teleport-resumed.png')
+      const tpResumedScreen = strip((await evaluate(`window.nmux.sessions.attach(${JSON.stringify(tp.id)})`)).snapshot)
+      check(/pong/i.test(tpResumedScreen), 'resumed teleport shows its history')
+      await evaluate(`window.nmux.sessions.remove(${JSON.stringify(tp.id)})`)
+    }
 
     await clickSession('smoke-shell')
     await sleep(1000)

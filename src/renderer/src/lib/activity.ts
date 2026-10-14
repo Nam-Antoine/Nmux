@@ -1,16 +1,13 @@
 /**
- * "Is this session doing something right now?" derived from output flow.
- * Claude Code redraws while it works, so recent output means busy; a
- * running session with no output for a few seconds is idle (waiting for
- * input or a long-running command that prints nothing).
+ * "Is this session doing something right now?" Busy means Claude is in the
+ * middle of a turn (`SessionMeta.working`, from the title spinner Claude Code
+ * sets). Output flow alone is not enough: typing, redraws and shells print
+ * too. Last-output time is still tracked for the "last output" hints.
  */
 import { useEffect, useState } from 'react'
 import type { SessionMeta } from '@shared/session'
 
 export type Activity = 'busy' | 'idle' | 'exited'
-
-/** Output younger than this counts as "busy". */
-export const BUSY_MS = 4000
 
 const lastOutputAt = new Map<string, number>()
 
@@ -23,10 +20,9 @@ export function lastOutput(sessionId: string): number | undefined {
   return lastOutputAt.get(sessionId)
 }
 
-export function activityOf(session: SessionMeta, now = Date.now()): Activity {
+export function activityOf(session: SessionMeta): Activity {
   if (session.status !== 'running') return 'exited'
-  const at = lastOutputAt.get(session.id)
-  return at !== undefined && now - at < BUSY_MS ? 'busy' : 'idle'
+  return session.working ? 'busy' : 'idle'
 }
 
 /** Re-renders the caller every `intervalMs` so activity states age. */

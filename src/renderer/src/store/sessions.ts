@@ -243,6 +243,19 @@ export const useSessions = create<SessionsState>((set, get) => {
     },
 
     async restart(id) {
+      const session = get().sessions.find((s) => s.id === id)
+      // Attaching a terminal to a running cloud session is not available to
+      // every account, so a known cloud session is brought into Nmux with
+      // `claude --teleport` as a new local Claude session instead.
+      if (session?.kind === 'cloud' && session.cloudSessionId) {
+        await get().create({
+          kind: 'claude',
+          cwd: session.cwd,
+          name: `${session.name} (teleported)`.slice(0, 80),
+          teleportCloudSession: session.cloudSessionId
+        })
+        return
+      }
       await api.sessions.restart(id)
       get().select(id)
     },

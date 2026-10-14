@@ -176,8 +176,8 @@ export function NewSessionDialog(): React.JSX.Element {
           <>
             <p className="muted small" style={{ margin: 0 }}>
               Runs <code>claude --cloud</code>: Claude works in an Anthropic cloud session on this folder&apos;s
-              GitHub repo and current branch, and this tab is the live terminal for it. It keeps running in the
-              cloud when you stop this tab; Reattach picks it up again.
+              GitHub repo and current branch (a folder that is not a git repo starts empty). Watch it on
+              claude.ai, or Teleport it into a new Nmux session when you want it here.
             </p>
             <label className="field">
               <span className="label">Task</span>

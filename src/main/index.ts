@@ -63,6 +63,7 @@ if (!gotLock) {
       runningCount = sessions.filter((s) => s.status === 'running').length
       updateTrayTooltip(runningCount)
       if (runningCount === 0) keepAwake?.noteIdle()
+      else keepAwake?.setWorking(sessions.some((s) => s.status === 'running' && s.working))
     }
     client.on('changed', setRunning)
     client.on('connected', (info) => {
@@ -73,7 +74,6 @@ if (!gotLock) {
       updateTrayTooltip(0)
       keepAwake?.noteIdle()
     })
-    client.on('data', () => keepAwake?.noteActivity())
     registerIpc(client)
 
     // After sleep or hibernate the pipe is normally intact; a quick round

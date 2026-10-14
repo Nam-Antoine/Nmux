@@ -21,6 +21,7 @@ import type { SessionStore } from '../store/SessionStore'
 import { PtySession } from './PtySession'
 import { claudeLaunch, cloudLaunch, sessionEnv, shellLaunch, type LaunchSpec } from './launch'
 import { CloudIdSniffer } from './cloudId'
+import { ClaudeTitleWatcher } from './claudeTitle'
 import { transcriptState } from './claudeProjects'
 
 export interface SessionManagerEvents {
@@ -47,7 +48,7 @@ export class SessionManager extends EventEmitter {
     // start every persisted session is `exited` and can be resumed/restarted.
     for (const meta of store.load()) {
       this.entries.set(meta.id, {
-        meta: { ...meta, status: 'exited', pid: undefined }
+        meta: { ...meta, status: 'exited', pid: undefined, working: undefined }
       })
     }
   }
@@ -89,13 +90,14 @@ export class SessionManager extends EventEmitter {
       skipPermissions: req.kind === 'claude' && req.skipPermissions ? true : undefined,
       cloudTask: req.kind === 'cloud' ? req.cloudTask : undefined,
       cloudSessionId: req.kind === 'cloud' ? req.attachCloudSession : undefined,
+      teleportedFrom: req.teleportCloudSession,
       createdAt: now,
       lastActiveAt: now,
       status: 'exited'
     }
     const entry: Entry = { meta }
     this.entries.set(id, entry)
-    this.spawn(entry, { resume: Boolean(req.resumeClaudeSessionId) })
+    this.spawn(entry, { resume: Boolean(req.resumeClaudeSessionId), teleport: req.teleportCloudSession })
     return entry.meta
   }
 
@@ -113,6 +115,7 @@ export class SessionManager extends EventEmitter {
     if (meta.status === 'running') return meta
     meta.notice = undefined
     let resume = true
+    let teleport: string | undefined
     if (meta.kind === 'claude' && meta.claudeSessionId) {
       const state = transcriptState(meta.cwd, meta.claudeSessionId)
       if (state === 'missing' || state === 'empty') {
@@ -120,7 +123,12 @@ export class SessionManager extends EventEmitter {
         // Claude refuses `--session-id` for an id that already has a file,
         // even one without messages, so the empty case needs a new id.
         if (state === 'empty') meta.claudeSessionId = randomUUID()
-        meta.notice = 'Nothing to resume: the previous conversation had no messages, so this is a new one.'
+        // A teleported conversation is only saved locally once you send
+        // something; until then, bring it in from the cloud again.
+        teleport = meta.teleportedFrom
+        meta.notice = teleport
+          ? undefined
+          : 'Nothing to resume: the previous conversation had no messages, so this is a new one.'
       }
     }
     if (meta.kind === 'cloud' && !meta.cloudSessionId) {
@@ -128,7 +136,7 @@ export class SessionManager extends EventEmitter {
       // creating one), so the only thing to do is ask again.
       meta.notice = 'No cloud session id was seen last time, so this asks for a new cloud session with the same task.'
     }
-    this.spawn(entry, { resume })
+    this.spawn(entry, { resume, teleport })
     return meta
   }
 
@@ -186,7 +194,7 @@ export class SessionManager extends EventEmitter {
 
   // ---- internals -----------------------------------------------------------
 
-  private spawn(entry: Entry, opts: { resume: boolean }): void {
+  private spawn(entry: Entry, opts: { resume: boolean; teleport?: string }): void {
     const { meta } = entry
     const launch: LaunchSpec =
       meta.kind === 'claude'
@@ -194,13 +202,16 @@ export class SessionManager extends EventEmitter {
             claudeSessionId: meta.claudeSessionId!,
             resume: opts.resume,
             extraArgs: meta.claudeArgs,
-            skipPermissions: meta.skipPermissions
+            skipPermissions: meta.skipPermissions,
+            teleport: opts.teleport
           })
         : meta.kind === 'cloud'
           ? cloudLaunch({ target: meta.cloudSessionId ?? meta.cloudTask ?? '', extraArgs: meta.claudeArgs })
           : shellLaunch()
     entry.sniffer =
       meta.kind === 'cloud' && (!meta.cloudSessionId || !meta.cloudUrl) ? new CloudIdSniffer() : undefined
+
+    const titles = meta.kind === 'shell' ? undefined : new ClaudeTitleWatcher()
 
     const pty = new PtySession({
       launch,
@@ -213,6 +224,11 @@ export class SessionManager extends EventEmitter {
 
     pty.on('data', (data, seq) => {
       this.emit('data', meta.id, data, seq)
+      const working = titles?.push(data) ?? null
+      if (working !== null && working !== Boolean(meta.working)) {
+        meta.working = working || undefined
+        this.notifyChanged()
+      }
       const found = entry.sniffer?.push(data)
       if (found && (!meta.cloudSessionId || (!meta.cloudUrl && found.url))) {
         meta.cloudSessionId ??= found.id
@@ -224,6 +240,7 @@ export class SessionManager extends EventEmitter {
     })
     pty.on('exit', (exitCode) => {
       meta.status = 'exited'
+      meta.working = undefined
       meta.exitCode = exitCode
       meta.pid = undefined
       meta.lastActiveAt = Date.now()

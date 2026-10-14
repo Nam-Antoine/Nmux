@@ -113,6 +113,11 @@ export function createRequest(value: unknown): CreateSessionRequest {
     v.attachCloudSession === undefined ? undefined : cloudSession(v.attachCloudSession, 'attachCloudSession')
   if (k === 'cloud' && !task && !attach) throw new TypeError('a cloud session needs a task or a session to attach to')
   if (k !== 'cloud' && (task || attach)) throw new TypeError('cloudTask and attachCloudSession are only for cloud sessions')
+  const teleport =
+    v.teleportCloudSession === undefined ? undefined : cloudSession(v.teleportCloudSession, 'teleportCloudSession')
+  if (teleport && (k !== 'claude' || v.resumeClaudeSessionId !== undefined)) {
+    throw new TypeError('teleportCloudSession is only for new claude sessions')
+  }
   return {
     kind: k,
     cwd: directory(v.cwd, 'cwd'),
@@ -122,7 +127,8 @@ export function createRequest(value: unknown): CreateSessionRequest {
     resumeClaudeSessionId:
       v.resumeClaudeSessionId === undefined ? undefined : uuid(v.resumeClaudeSessionId, 'resumeClaudeSessionId'),
     cloudTask: attach ? undefined : task,
-    attachCloudSession: attach
+    attachCloudSession: attach,
+    teleportCloudSession: teleport
   }
 }
 

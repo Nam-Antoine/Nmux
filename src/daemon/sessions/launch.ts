@@ -35,6 +35,8 @@ export interface ClaudeLaunchOptions {
   extraArgs?: string[]
   /** Append `--dangerously-skip-permissions`. */
   skipPermissions?: boolean
+  /** Start from this cloud session: `--teleport <id>`, keeping `--session-id` so Nmux owns the local id. */
+  teleport?: string
 }
 
 const SKIP_PERMISSIONS_FLAG = '--dangerously-skip-permissions'
@@ -42,7 +44,7 @@ const SKIP_PERMISSIONS_FLAG = '--dangerously-skip-permissions'
 export function claudeLaunch(opts: ClaudeLaunchOptions): LaunchSpec {
   const sessionArgs = opts.resume
     ? ['--resume', opts.claudeSessionId]
-    : ['--session-id', opts.claudeSessionId]
+    : [...(opts.teleport ? ['--teleport', opts.teleport] : []), '--session-id', opts.claudeSessionId]
   // The flag is owned by `skipPermissions`; drop a duplicate typed into extra args.
   const extra = (opts.extraArgs ?? []).filter((a) => !(opts.skipPermissions && a === SKIP_PERMISSIONS_FLAG))
   const args = [...sessionArgs, ...(opts.skipPermissions ? [SKIP_PERMISSIONS_FLAG] : []), ...extra]

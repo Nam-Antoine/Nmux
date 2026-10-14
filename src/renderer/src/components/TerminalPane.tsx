@@ -178,7 +178,7 @@ export function TerminalPane({ sessionId, active }: Props): React.JSX.Element {
       {exited && session && (
         <div className="terminal-overlay">
           <div className="terminal-overlay-card">
-            <strong>Process exited</strong>
+            <strong>{session.kind === 'cloud' && session.cloudSessionId ? 'Cloud session created' : 'Process exited'}</strong>
             {session.exitCode !== undefined && <span className="muted"> (code {session.exitCode})</span>}
             <div className="row" style={{ marginTop: 10 }}>
               <button className="btn primary" onClick={() => void restart(session.id)}>
@@ -192,7 +192,9 @@ export function TerminalPane({ sessionId, active }: Props): React.JSX.Element {
             </div>
             {session.kind === 'cloud' && (
               <div className="muted small" style={{ marginTop: 8 }}>
-                The cloud session keeps running without this tab.
+                {session.cloudSessionId
+                  ? 'It runs in the cloud on its own. Teleport opens its conversation here as a new local Claude session.'
+                  : 'No cloud session was created. Check the message above, then try again.'}
               </div>
             )}
           </div>

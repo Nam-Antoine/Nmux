@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react'
 import type { SessionMeta } from '@shared/session'
-import { activityOf, useNow } from '../lib/activity'
+import { activityOf } from '../lib/activity'
 import { groupByFolder, type FolderGroup } from '../lib/folders'
 import { useSessions } from '../store/sessions'
 import { kindLabel, restartLabel } from '../lib/sessionKind'
@@ -18,7 +18,6 @@ export function Sidebar(): React.JSX.Element {
   const toggleSidebar = useSessions((s) => s.toggleSidebar)
   const toggleOverview = useSessions((s) => s.toggleOverview)
   const select = useSessions((s) => s.select)
-  const now = useNow(1000)
 
   const groups = useMemo(() => groupByFolder(sessions), [sessions])
 
@@ -43,7 +42,7 @@ export function Sidebar(): React.JSX.Element {
         </button>
         <ul className="rail-list">
           {sessions.map((session) => {
-            const activity = activityOf(session, now)
+            const activity = activityOf(session)
             return (
               <li key={session.id}>
                 <button
@@ -91,7 +90,6 @@ export function Sidebar(): React.JSX.Element {
             group={group}
             collapsed={collapsed.includes(group.key)}
             activeId={activeId}
-            now={now}
           />
         ))}
         {groups.length === 0 && <div className="muted session-empty">No sessions yet.</div>}
@@ -107,13 +105,11 @@ export function Sidebar(): React.JSX.Element {
 function FolderSection({
   group,
   collapsed,
-  activeId,
-  now
+  activeId
 }: {
   group: FolderGroup
   collapsed: boolean
   activeId: string | null
-  now: number
 }): React.JSX.Element {
   const toggleFolder = useSessions((s) => s.toggleFolder)
   const openDialog = useSessions((s) => s.openDialog)
@@ -161,7 +157,7 @@ function FolderSection({
       {!collapsed && (
         <ul className="session-list">
           {group.sessions.map((session) => (
-            <SessionItem key={session.id} session={session} active={session.id === activeId} now={now} />
+            <SessionItem key={session.id} session={session} active={session.id === activeId} />
           ))}
         </ul>
       )}
@@ -169,7 +165,7 @@ function FolderSection({
   )
 }
 
-function SessionItem({ session, active, now }: { session: SessionMeta; active: boolean; now: number }): React.JSX.Element {
+function SessionItem({ session, active }: { session: SessionMeta; active: boolean }): React.JSX.Element {
   const select = useSessions((s) => s.select)
   const restart = useSessions((s) => s.restart)
   const kill = useSessions((s) => s.kill)
@@ -179,7 +175,7 @@ function SessionItem({ session, active, now }: { session: SessionMeta; active: b
   const [draft, setDraft] = useState(session.name)
 
   const running = session.status === 'running'
-  const activity = activityOf(session, now)
+  const activity = activityOf(session)
 
   const commitRename = (): void => {
     setEditing(false)
@@ -217,7 +213,6 @@ function SessionItem({ session, active, now }: { session: SessionMeta; active: b
           </span>
         )}
         <span className="session-sub muted">
-          <span className={`tag${running ? ' ok' : ''}${activity === 'busy' ? ' live' : ''}`}>{ACTIVITY_LABEL[activity]}</span>
           {kindLabel(session.kind)}
           {session.skipPermissions && (
             <span className="tag warn" title="Started with --dangerously-skip-permissions">
