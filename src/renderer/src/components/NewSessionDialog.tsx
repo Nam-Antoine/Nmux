@@ -36,6 +36,8 @@ export function NewSessionDialog(): React.JSX.Element {
   const [args, setArgs] = useState('')
   const [skipPermissions, setSkipPermissions] = useState(() => readLocal(SKIP_PERMISSIONS_KEY) === '1')
   const [resumeId, setResumeId] = useState('')
+  const [cloudTask, setCloudTask] = useState('')
+  const [attachCloud, setAttachCloud] = useState('')
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
@@ -65,6 +67,10 @@ export function NewSessionDialog(): React.JSX.Element {
       setError('Choose a project folder.')
       return
     }
+    if (kind === 'cloud' && !cloudTask.trim() && !attachCloud.trim()) {
+      setError('Describe the task, or paste a cloud session to attach to.')
+      return
+    }
     setBusy(true)
     setError(null)
     try {
@@ -74,9 +80,11 @@ export function NewSessionDialog(): React.JSX.Element {
         kind,
         cwd: cwd.trim(),
         name: name.trim() || undefined,
-        claudeArgs: kind === 'claude' ? splitArgs(args) : [],
+        claudeArgs: kind === 'shell' ? [] : splitArgs(args),
         skipPermissions: kind === 'claude' && skipPermissions ? true : undefined,
-        resumeClaudeSessionId: kind === 'claude' && resumeId.trim() ? resumeId.trim() : undefined
+        resumeClaudeSessionId: kind === 'claude' && resumeId.trim() ? resumeId.trim() : undefined,
+        cloudTask: kind === 'cloud' && !attachCloud.trim() ? cloudTask.trim() : undefined,
+        attachCloudSession: kind === 'cloud' && attachCloud.trim() ? attachCloud.trim() : undefined
       })
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err))
@@ -96,6 +104,9 @@ export function NewSessionDialog(): React.JSX.Element {
           <div className="segmented">
             <button type="button" className={kind === 'claude' ? 'on' : ''} onClick={() => setKind('claude')}>
               Claude Code
+            </button>
+            <button type="button" className={kind === 'cloud' ? 'on' : ''} onClick={() => setKind('cloud')}>
+              Cloud
             </button>
             <button type="button" className={kind === 'shell' ? 'on' : ''} onClick={() => setKind('shell')}>
               Shell
@@ -129,7 +140,7 @@ export function NewSessionDialog(): React.JSX.Element {
           <input
             value={name}
             onChange={(e) => setName(e.target.value)}
-            placeholder="Defaults to the folder name"
+            placeholder={kind === 'cloud' ? 'Defaults to the task' : 'Defaults to the folder name'}
             autoFocus={Boolean(presetName)}
           />
         </label>
@@ -157,6 +168,38 @@ export function NewSessionDialog(): React.JSX.Element {
             <label className="field">
               <span className="label">Resume existing Claude session ID (optional)</span>
               <input value={resumeId} onChange={(e) => setResumeId(e.target.value)} placeholder="uuid from a previous session" />
+            </label>
+          </>
+        )}
+
+        {kind === 'cloud' && (
+          <>
+            <p className="muted small" style={{ margin: 0 }}>
+              Runs <code>claude --cloud</code>: Claude works in an Anthropic cloud session on this folder&apos;s
+              GitHub repo and current branch, and this tab is the live terminal for it. It keeps running in the
+              cloud when you stop this tab; Reattach picks it up again.
+            </p>
+            <label className="field">
+              <span className="label">Task</span>
+              <textarea
+                value={cloudTask}
+                onChange={(e) => setCloudTask(e.target.value)}
+                placeholder="Fix the flaky login test and open a PR"
+                rows={3}
+                disabled={Boolean(attachCloud.trim())}
+              />
+            </label>
+            <label className="field">
+              <span className="label">Or attach to an existing cloud session (optional)</span>
+              <input
+                value={attachCloud}
+                onChange={(e) => setAttachCloud(e.target.value)}
+                placeholder="session_… or https://claude.ai/code/session_…"
+              />
+            </label>
+            <label className="field">
+              <span className="label">Extra claude args (optional)</span>
+              <input value={args} onChange={(e) => setArgs(e.target.value)} placeholder="--model opus" />
             </label>
           </>
         )}

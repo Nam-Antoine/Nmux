@@ -19,7 +19,8 @@ import {
 } from '@shared/session'
 import type { SessionStore } from '../store/SessionStore'
 import { PtySession } from './PtySession'
-import { claudeLaunch, sessionEnv, shellLaunch, type LaunchSpec } from './launch'
+import { claudeLaunch, cloudLaunch, sessionEnv, shellLaunch, type LaunchSpec } from './launch'
+import { CloudIdSniffer } from './cloudId'
 import { transcriptState } from './claudeProjects'
 
 export interface SessionManagerEvents {
@@ -32,6 +33,8 @@ interface Entry {
   pty?: PtySession
   /** Screen at the moment the process exited, so attach() can still show it. */
   lastScreen?: AttachResult
+  /** Cloud sessions whose id is not known yet: watches output for it. */
+  sniffer?: CloudIdSniffer
 }
 
 export class SessionManager extends EventEmitter {
@@ -84,6 +87,8 @@ export class SessionManager extends EventEmitter {
       claudeSessionId,
       claudeArgs: req.claudeArgs ?? [],
       skipPermissions: req.kind === 'claude' && req.skipPermissions ? true : undefined,
+      cloudTask: req.kind === 'cloud' ? req.cloudTask : undefined,
+      cloudSessionId: req.kind === 'cloud' ? req.attachCloudSession : undefined,
       createdAt: now,
       lastActiveAt: now,
       status: 'exited'
@@ -117,6 +122,11 @@ export class SessionManager extends EventEmitter {
         if (state === 'empty') meta.claudeSessionId = randomUUID()
         meta.notice = 'Nothing to resume: the previous conversation had no messages, so this is a new one.'
       }
+    }
+    if (meta.kind === 'cloud' && !meta.cloudSessionId) {
+      // The first start never reported a session (e.g. the CLI failed before
+      // creating one), so the only thing to do is ask again.
+      meta.notice = 'No cloud session id was seen last time, so this asks for a new cloud session with the same task.'
     }
     this.spawn(entry, { resume })
     return meta
@@ -186,7 +196,11 @@ export class SessionManager extends EventEmitter {
             extraArgs: meta.claudeArgs,
             skipPermissions: meta.skipPermissions
           })
-        : shellLaunch()
+        : meta.kind === 'cloud'
+          ? cloudLaunch({ target: meta.cloudSessionId ?? meta.cloudTask ?? '', extraArgs: meta.claudeArgs })
+          : shellLaunch()
+    entry.sniffer =
+      meta.kind === 'cloud' && (!meta.cloudSessionId || !meta.cloudUrl) ? new CloudIdSniffer() : undefined
 
     const pty = new PtySession({
       launch,
@@ -197,7 +211,17 @@ export class SessionManager extends EventEmitter {
       scrollback: SCROLLBACK_LINES
     })
 
-    pty.on('data', (data, seq) => this.emit('data', meta.id, data, seq))
+    pty.on('data', (data, seq) => {
+      this.emit('data', meta.id, data, seq)
+      const found = entry.sniffer?.push(data)
+      if (found && (!meta.cloudSessionId || (!meta.cloudUrl && found.url))) {
+        meta.cloudSessionId ??= found.id
+        meta.cloudUrl ??= found.url
+        // Keep watching while the link is missing: it may be printed later.
+        if (meta.cloudUrl) entry.sniffer = undefined
+        this.notifyChanged()
+      }
+    })
     pty.on('exit', (exitCode) => {
       meta.status = 'exited'
       meta.exitCode = exitCode
@@ -252,5 +276,10 @@ export class SessionManager extends EventEmitter {
 
 function defaultName(req: CreateSessionRequest): string {
   const folder = basename(req.cwd) || req.cwd
-  return req.kind === 'claude' ? folder : `${folder} (shell)`
+  if (req.kind === 'shell') return `${folder} (shell)`
+  if (req.kind === 'cloud') {
+    const task = req.cloudTask?.replace(/\s+/g, ' ').trim()
+    return task ? `${task.slice(0, 48)}${task.length > 48 ? '…' : ''}` : `${folder} (cloud)`
+  }
+  return folder
 }

@@ -3,12 +3,19 @@
  * This file must stay free of Node and Electron imports.
  */
 
-export type SessionKind = 'claude' | 'shell'
+/**
+ * claude - Claude Code running on this machine
+ * shell  - a plain shell
+ * cloud  - `claude --cloud`: the agent runs in an Anthropic cloud session and
+ *          this machine only hosts the terminal client attached to it
+ */
+export type SessionKind = 'claude' | 'shell' | 'cloud'
 
 /**
  * running  - a live PTY process is attached
  * exited   - the process ended (or Nmux restarted). Claude sessions can be
- *            resumed with `claude --resume`, shell sessions can be restarted.
+ *            resumed with `claude --resume`, shell sessions can be restarted,
+ *            cloud sessions re-attached with `claude --cloud <id>`.
  */
 export type SessionStatus = 'running' | 'exited'
 
@@ -32,6 +39,15 @@ export interface SessionMeta {
    * resume keeps the same mode. Only meaningful for `kind === 'claude'`.
    */
   skipPermissions?: boolean
+  /** What a cloud session was asked to do (`claude --cloud "<task>"`). Only for `kind === 'cloud'`. */
+  cloudTask?: string
+  /**
+   * Cloud session id (`session_...`), read from the CLI's "Cloud session:" line
+   * or given when attaching. Present once known; used to re-attach.
+   */
+  cloudSessionId?: string
+  /** claude.ai page for the cloud session, when the CLI printed one. */
+  cloudUrl?: string
   /**
    * One-line message from Nmux about the last start, e.g. why a resume became
    * a fresh conversation. Cleared on the next start.
@@ -53,6 +69,10 @@ export interface CreateSessionRequest {
   skipPermissions?: boolean
   /** Attach to an existing Claude conversation instead of starting a new one. */
   resumeClaudeSessionId?: string
+  /** `kind === 'cloud'`: task for a new cloud session. */
+  cloudTask?: string
+  /** `kind === 'cloud'`: attach to an existing cloud session (id or claude.ai/code URL) instead. */
+  attachCloudSession?: string
 }
 
 /** Screen snapshot returned when the UI attaches to a session. */
@@ -89,6 +109,7 @@ export const LIMITS = {
   pathLength: 4096,
   claudeArgsCount: 32,
   claudeArgLength: 512,
+  cloudTaskLength: 4000,
   /** One keyboard/paste chunk. Large pastes are split by xterm anyway. */
   writeChunkLength: 1024 * 1024,
   maxCols: 1000,

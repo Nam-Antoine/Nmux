@@ -8,6 +8,11 @@ belong to Nmux, so closing VS Code (or the Nmux window) never kills them.
 - Quit and relaunch → "Resume conversation" (Nmux owns the Claude session ID).
 - Sessions are grouped by project folder in the sidebar; a folder can hold as
   many Claude and shell sessions as you like.
+- Cloud sessions: give a task and Nmux runs `claude --cloud "<task>"`, so the
+  agent works in an Anthropic cloud session on the folder's repo and branch
+  while Nmux hosts the live terminal. Nmux saves the cloud session id, so
+  "Reattach" (`claude --cloud <id>`) picks it up later, and you can also attach
+  to an existing one by id or claude.ai/code URL.
 - Optional "Skip permission prompts" per session (`--dangerously-skip-permissions`).
 - Grid view: split the workspace 1×2, 2×2, up to 4×4 from the status bar and
   choose which session each pane shows.

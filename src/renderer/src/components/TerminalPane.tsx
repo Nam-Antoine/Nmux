@@ -17,6 +17,7 @@ import { api } from '../api'
 import { subscribePty } from '../lib/ptyStream'
 import { useSessions } from '../store/sessions'
 import { terminalTheme } from '../styles/terminalTheme'
+import { restartLabel } from '../lib/sessionKind'
 
 interface Props {
   sessionId: string
@@ -181,9 +182,19 @@ export function TerminalPane({ sessionId, active }: Props): React.JSX.Element {
             {session.exitCode !== undefined && <span className="muted"> (code {session.exitCode})</span>}
             <div className="row" style={{ marginTop: 10 }}>
               <button className="btn primary" onClick={() => void restart(session.id)}>
-                {session.kind === 'claude' ? 'Resume conversation' : 'Restart shell'}
+                {restartLabel(session).long}
               </button>
+              {session.cloudUrl && (
+                <a className="btn" href={session.cloudUrl} target="_blank" rel="noreferrer">
+                  Open on claude.ai
+                </a>
+              )}
             </div>
+            {session.kind === 'cloud' && (
+              <div className="muted small" style={{ marginTop: 8 }}>
+                The cloud session keeps running without this tab.
+              </div>
+            )}
           </div>
         </div>
       )}

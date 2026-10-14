@@ -55,8 +55,42 @@ export function directory(value: unknown, what: string): string {
 }
 
 export function kind(value: unknown): SessionKind {
-  if (value !== 'claude' && value !== 'shell') throw new TypeError('kind must be "claude" or "shell"')
+  if (value !== 'claude' && value !== 'shell' && value !== 'cloud') {
+    throw new TypeError('kind must be "claude", "shell" or "cloud"')
+  }
   return value
+}
+
+const CLOUD_ID_RE = /^(?:session|cse)_[A-Za-z0-9_-]{1,120}$/
+
+/**
+ * A cloud session to attach to, as a bare id or a claude.ai/code URL that
+ * ends in one. Returns the id: only that reaches the command line.
+ */
+export function cloudSession(value: unknown, what: string): string {
+  const s = str(value, what, 2048).trim()
+  if (CLOUD_ID_RE.test(s)) return s
+  let url: URL
+  try {
+    url = new URL(s)
+  } catch {
+    throw new TypeError(`${what} must be a cloud session id (session_...) or a claude.ai/code URL`)
+  }
+  const last = url.pathname.split('/').filter(Boolean).pop() ?? ''
+  if (url.protocol !== 'https:' || url.hostname !== 'claude.ai' || !CLOUD_ID_RE.test(last)) {
+    throw new TypeError(`${what} must be a cloud session id (session_...) or a claude.ai/code URL`)
+  }
+  return last
+}
+
+/** Free text for a cloud task. Newlines are fine; other control characters are not. */
+export function cloudTask(value: unknown, what: string): string {
+  const s = str(value, what, LIMITS.cloudTaskLength)
+  // The CLI would read a leading dash as another option.
+  if (s.trimStart().startsWith('-')) throw new TypeError(`${what} must not start with "-"`)
+  // eslint-disable-next-line no-control-regex
+  if (/[\x00-\x09\x0b-\x1f\x7f]/.test(s)) throw new TypeError(`${what} must not contain control characters`)
+  return s
 }
 
 export function args(value: unknown): string[] {
@@ -73,14 +107,22 @@ export function args(value: unknown): string[] {
 export function createRequest(value: unknown): CreateSessionRequest {
   if (typeof value !== 'object' || value === null) throw new TypeError('request must be an object')
   const v = value as Record<string, unknown>
+  const k = kind(v.kind)
+  const task = v.cloudTask === undefined ? undefined : cloudTask(v.cloudTask, 'cloudTask').trim() || undefined
+  const attach =
+    v.attachCloudSession === undefined ? undefined : cloudSession(v.attachCloudSession, 'attachCloudSession')
+  if (k === 'cloud' && !task && !attach) throw new TypeError('a cloud session needs a task or a session to attach to')
+  if (k !== 'cloud' && (task || attach)) throw new TypeError('cloudTask and attachCloudSession are only for cloud sessions')
   return {
-    kind: kind(v.kind),
+    kind: k,
     cwd: directory(v.cwd, 'cwd'),
     name: v.name === undefined ? undefined : label(v.name, 'name'),
     claudeArgs: args(v.claudeArgs),
     skipPermissions: v.skipPermissions === undefined ? undefined : bool(v.skipPermissions, 'skipPermissions'),
     resumeClaudeSessionId:
-      v.resumeClaudeSessionId === undefined ? undefined : uuid(v.resumeClaudeSessionId, 'resumeClaudeSessionId')
+      v.resumeClaudeSessionId === undefined ? undefined : uuid(v.resumeClaudeSessionId, 'resumeClaudeSessionId'),
+    cloudTask: attach ? undefined : task,
+    attachCloudSession: attach
   }
 }
 

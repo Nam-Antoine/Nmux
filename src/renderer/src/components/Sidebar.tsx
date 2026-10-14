@@ -3,6 +3,7 @@ import type { SessionMeta } from '@shared/session'
 import { activityOf, useNow } from '../lib/activity'
 import { groupByFolder, type FolderGroup } from '../lib/folders'
 import { useSessions } from '../store/sessions'
+import { kindLabel, restartLabel } from '../lib/sessionKind'
 
 const DOT_CLASS = { busy: 'busy', idle: 'running', exited: 'exited' } as const
 const ACTIVITY_LABEL = { busy: 'working', idle: 'idle', exited: 'exited' } as const
@@ -217,7 +218,7 @@ function SessionItem({ session, active, now }: { session: SessionMeta; active: b
         )}
         <span className="session-sub muted">
           <span className={`tag${running ? ' ok' : ''}${activity === 'busy' ? ' live' : ''}`}>{ACTIVITY_LABEL[activity]}</span>
-          {session.kind === 'claude' ? 'claude' : 'shell'}
+          {kindLabel(session.kind)}
           {session.skipPermissions && (
             <span className="tag warn" title="Started with --dangerously-skip-permissions">
               skips permissions
@@ -226,6 +227,11 @@ function SessionItem({ session, active, now }: { session: SessionMeta; active: b
         </span>
       </div>
       <div className="session-actions" onClick={(e) => e.stopPropagation()}>
+        {session.cloudUrl && (
+          <a className="icon-btn" title="Open on claude.ai" href={session.cloudUrl} target="_blank" rel="noreferrer">
+            ↗
+          </a>
+        )}
         {running ? (
           <button className="icon-btn" title="Stop process" onClick={() => void kill(session.id)}>
             ■
@@ -233,7 +239,7 @@ function SessionItem({ session, active, now }: { session: SessionMeta; active: b
         ) : (
           <button
             className="icon-btn"
-            title={session.kind === 'claude' ? 'Resume conversation' : 'Restart shell'}
+            title={restartLabel(session).long}
             onClick={() => void restart(session.id)}
           >
             ▶

@@ -40,16 +40,44 @@ export interface ClaudeLaunchOptions {
 const SKIP_PERMISSIONS_FLAG = '--dangerously-skip-permissions'
 
 export function claudeLaunch(opts: ClaudeLaunchOptions): LaunchSpec {
-  const bin = findOnPath('claude') ?? (isWin ? 'claude.exe' : 'claude')
   const sessionArgs = opts.resume
     ? ['--resume', opts.claudeSessionId]
     : ['--session-id', opts.claudeSessionId]
   // The flag is owned by `skipPermissions`; drop a duplicate typed into extra args.
   const extra = (opts.extraArgs ?? []).filter((a) => !(opts.skipPermissions && a === SKIP_PERMISSIONS_FLAG))
   const args = [...sessionArgs, ...(opts.skipPermissions ? [SKIP_PERMISSIONS_FLAG] : []), ...extra]
+  return claudeBinaryLaunch(args)
+}
 
+export interface CloudLaunchOptions {
+  /** Existing cloud session id to attach to, or the task for a new one. */
+  target: string
+  extraArgs?: string[]
+}
+
+/**
+ * `claude --cloud <task|session_id>`: the agent runs in an Anthropic cloud
+ * session; this process is the terminal client for it. The CLI takes the repo
+ * and branch from the working directory.
+ */
+export function cloudLaunch(opts: CloudLaunchOptions): LaunchSpec {
+  // A cmd.exe shim would re-parse the task text (quotes, %VAR%, &), so keep it on one safe line there.
+  const target = usesCmdShim() ? opts.target.replace(/["%\r\n]+/g, ' ') : opts.target
+  return claudeBinaryLaunch(['--cloud', target, ...(opts.extraArgs ?? [])])
+}
+
+function claudeBin(): string {
+  return findOnPath('claude') ?? (isWin ? 'claude.exe' : 'claude')
+}
+
+function usesCmdShim(): boolean {
+  return isWin && /\.(cmd|bat)$/i.test(claudeBin())
+}
+
+function claudeBinaryLaunch(args: string[]): LaunchSpec {
+  const bin = claudeBin()
   // npm-installed claude is a .cmd shim on Windows; ConPTY needs cmd.exe to run it.
-  if (isWin && /\.(cmd|bat)$/i.test(bin)) {
+  if (usesCmdShim()) {
     return { file: process.env.COMSPEC ?? 'cmd.exe', args: ['/d', '/c', bin, ...args] }
   }
   return { file: bin, args }

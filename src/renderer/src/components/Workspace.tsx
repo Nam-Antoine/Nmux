@@ -73,7 +73,7 @@ function GridCell({
                   <option key={s.id} value={s.id}>
                     {s.status === 'running' ? '● ' : '○ '}
                     {s.name}
-                    {s.kind === 'shell' ? ' (shell)' : ''}
+                    {s.kind === 'claude' ? '' : ` (${s.kind})`}
                     {s.status !== 'running' ? ' — exited' : ''}
                   </option>
                 ))}

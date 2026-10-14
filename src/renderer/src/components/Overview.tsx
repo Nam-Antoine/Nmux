@@ -8,6 +8,7 @@ import type { SessionMeta } from '@shared/session'
 import { activityOf, ago, duration, lastOutput, useNow, type Activity } from '../lib/activity'
 import { groupByFolder } from '../lib/folders'
 import { useSessions } from '../store/sessions'
+import { kindLabel, restartLabel } from '../lib/sessionKind'
 
 const LABEL: Record<Activity, string> = { busy: 'working', idle: 'idle', exited: 'exited' }
 
@@ -128,11 +129,12 @@ function SessionCard({ session, active, now }: { session: SessionMeta; active: b
       </div>
       <div className={`card-status ${activity}`}>{statusLine()}</div>
       <div className="card-meta">
-        <span>{session.kind === 'claude' ? 'claude' : 'shell'}</span>
+        <span>{kindLabel(session.kind)}</span>
         {session.skipPermissions && <span className="tag warn">skips permissions</span>}
         {running && session.pid !== undefined && <span>pid {session.pid}</span>}
         {running && <span title="Since this process started">up {duration(now - session.lastActiveAt)}</span>}
         {session.claudeSessionId && <span title={session.claudeSessionId}>id {session.claudeSessionId.slice(0, 8)}…</span>}
+        {session.cloudSessionId && <span title={session.cloudSessionId}>{session.cloudSessionId.slice(0, 16)}…</span>}
       </div>
       <div className="card-actions" onClick={(e) => e.stopPropagation()}>
         <button className="btn small" onClick={open}>
@@ -144,7 +146,7 @@ function SessionCard({ session, active, now }: { session: SessionMeta; active: b
           </button>
         ) : (
           <button className="btn small" onClick={() => void restart(session.id)}>
-            {session.kind === 'claude' ? 'Resume' : 'Restart'}
+            {restartLabel(session).short}
           </button>
         )}
         <button
