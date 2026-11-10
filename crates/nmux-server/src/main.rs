@@ -17,7 +17,6 @@ fn main() -> anyhow::Result<()> {
             other => anyhow::bail!("unknown argument: {other}"),
         }
     }
-    let custom = data_dir.is_some();
     let data_dir = data_dir
         .or_else(nmux_server::default_data_dir)
         .ok_or_else(|| anyhow::anyhow!("cannot find a data directory; pass --data-dir"))?;
@@ -26,7 +25,6 @@ fn main() -> anyhow::Result<()> {
         data_dir,
         env: launch::process_env(),
         claude_dir: transcripts::claude_config_dir(),
-        legacy_sessions: if custom { None } else { nmux_server::legacy_sessions_file() },
     };
     tokio::runtime::Builder::new_multi_thread().enable_all().build()?.block_on(nmux_server::run(config))
 }

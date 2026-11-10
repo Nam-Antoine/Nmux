@@ -24,7 +24,6 @@ pub struct Config {
     pub data_dir: PathBuf,
     pub env: BTreeMap<String, String>,
     pub claude_dir: Option<PathBuf>,
-    pub legacy_sessions: Option<PathBuf>,
 }
 
 struct Runtime {
@@ -88,12 +87,7 @@ fn now_ms() -> u64 {
 
 impl Hub {
     pub fn new(config: Config) -> Arc<Hub> {
-        let mut imported = false;
-        let state = persist::load(&config.data_dir).unwrap_or_else(|| {
-            let legacy = config.legacy_sessions.as_deref().and_then(persist::import_legacy);
-            imported = legacy.is_some();
-            legacy.unwrap_or_default()
-        });
+        let state = persist::load(&config.data_dir).unwrap_or_default();
         let (events, _) = broadcast::channel(4096);
         let forward_events = events.clone();
         let forwards = Forwards::load(
@@ -109,7 +103,7 @@ impl Hub {
                 runtimes: HashMap::new(),
                 generation: 0,
                 window_visible: true,
-                save_dirty: imported,
+                save_dirty: false,
                 last_save: Instant::now(),
             }),
             events,

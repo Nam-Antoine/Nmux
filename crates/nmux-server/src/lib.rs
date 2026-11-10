@@ -26,11 +26,6 @@ pub fn default_data_dir() -> Option<PathBuf> {
     }
 }
 
-pub fn legacy_sessions_file() -> Option<PathBuf> {
-    let file = PathBuf::from(std::env::var_os("APPDATA")?).join("nmux").join("sessions.json");
-    file.is_file().then_some(file)
-}
-
 pub async fn run(config: hub::Config) -> anyhow::Result<()> {
     let data_dir = config.data_dir.clone();
     let hub = hub::Hub::new(config);

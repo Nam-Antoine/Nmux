@@ -9,7 +9,7 @@ use nmux_server::launch;
 use tokio::sync::mpsc::UnboundedReceiver;
 
 fn config(dir: &Path) -> Config {
-    Config { data_dir: dir.to_path_buf(), env: launch::process_env(), claude_dir: None, legacy_sessions: None }
+    Config { data_dir: dir.to_path_buf(), env: launch::process_env(), claude_dir: None }
 }
 
 async fn start(dir: &Path) -> (tokio::task::JoinHandle<anyhow::Result<()>>, Client, UnboundedReceiver<Event>) {
