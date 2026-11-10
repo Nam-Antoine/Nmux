@@ -1,0 +1,29 @@
+[package]
+name = "nmux-server"
+description = "The Nmux background server: owns the terminals so they outlive the window."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[lib]
+name = "nmux_server"
+path = "src/lib.rs"
+
+[[bin]]
+name = "nmux-server"
+path = "src/main.rs"
+
+[dependencies]
+nmux-core = { path = "../nmux-core" }
+nmux-proto = { path = "../nmux-proto" }
+serde.workspace = true
+serde_json.workspace = true
+tokio.workspace = true
+anyhow.workspace = true
+portable-pty = "0.9"
+vt100 = "0.16"
+uuid = { version = "1", features = ["v4"] }
+getrandom = "0.3"
+
+[dev-dependencies]
+tempfile = "3"

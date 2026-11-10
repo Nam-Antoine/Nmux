@@ -33,3 +33,7 @@ pnpm-debug.log*
 .DS_Store
 Thumbs.db
 desktop.ini
+
+# Rust
+target/
+src-tauri/gen/
