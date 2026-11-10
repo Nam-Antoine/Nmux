@@ -9,7 +9,7 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use nmux_core::detect;
 use nmux_core::validate;
-use nmux_core::{AgentState, Created, Dir, PaneId, PaneKind, PaneSpec, PaneStatus, State};
+use nmux_core::{AgentState, Created, Dir, MachineId, MachineStatus, PaneId, PaneKind, PaneSpec, PaneStatus, State};
 use nmux_proto::{Event, Op, Reply, Snapshot};
 use tokio::sync::{broadcast, watch};
 
@@ -19,6 +19,7 @@ use crate::ports::{self, Forwards};
 use crate::launch::{self, ClaudeOptions};
 use crate::persist;
 use crate::pty::PtyProcess;
+use crate::remote;
 use crate::screen::{Screen, DEFAULT_COLS, DEFAULT_ROWS};
 use crate::transcripts::{self, Transcript};
 
@@ -72,6 +73,27 @@ type Graveyard = Vec<PtyProcess>;
 
 const CURSOR_QUERY: &str = "\x1b[6n";
 const SAVE_EVERY: Duration = Duration::from_millis(500);
+
+/// Remote panes and where their tmux session lives: `(ssh target, session name)`.
+fn remote_sessions(state: &State) -> HashMap<PaneId, (String, String)> {
+    state
+        .panes
+        .values()
+        .filter_map(|p| {
+            let machine: MachineId = p.machine?;
+            let target = state.machine(machine)?.target.clone();
+            Some((p.id, (target, remote::tmux_session(p.id, p.created_at))))
+        })
+        .collect()
+}
+
+/// The host part of an ssh target, as a first name for the machine.
+fn default_machine_label(target: &str) -> String {
+    let rest = target.strip_prefix("ssh://").unwrap_or(target);
+    let rest = rest.rsplit('@').next().unwrap_or(rest);
+    let host = rest.split(['/', ':']).next().unwrap_or(rest);
+    if host.is_empty() { target.to_string() } else { host.to_string() }
+}
 
 fn now_ms() -> u64 {
     SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_millis() as u64).unwrap_or(0)
@@ -172,7 +194,19 @@ impl Hub {
                     return Err("that pane is not running".into());
                 }
                 let path = files::stage_pasted_image(&self.config.data_dir, &data)?;
-                let text = files::display(&path);
+                let target = {
+                    let inner = self.lock();
+                    inner.state.panes.get(&pane).and_then(|p| p.machine).and_then(|m| inner.state.machine(m)).map(|m| m.target.clone())
+                };
+                let text = match target {
+                    // The agent runs over there, so the file has to be there too.
+                    Some(target) => {
+                        let bytes = std::fs::read(&path).map_err(|e| e.to_string())?;
+                        let name = path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+                        remote::upload(&target, &name, &bytes, &self.config.env)?
+                    }
+                    None => files::display(&path),
+                };
                 let inner = self.lock();
                 if let Some(rt) = inner.runtimes.get(&pane) {
                     if let Some(process) = &rt.process {
@@ -199,6 +233,25 @@ impl Hub {
             Op::StartForward { host, remote_port, local_port } => forwards(self.forwards.start(host.trim(), remote_port, local_port)?),
             Op::StopForward { id } => forwards(self.forwards.stop(id)?),
             Op::RemoveForward { id } => forwards(self.forwards.remove(id)?),
+            Op::CheckMachine { machine } => {
+                let target = {
+                    let mut inner = self.lock();
+                    let target = inner.state.machine(machine).ok_or("no such machine")?.target.clone();
+                    if inner.state.set_machine_status(machine, MachineStatus::Checking, None, false, false) {
+                        self.emit(Event::State { state: inner.state.clone() });
+                    }
+                    target
+                };
+                let found = remote::probe(&target, &self.config.env);
+                let mut inner = self.lock();
+                // The machine may have been removed, or pointed elsewhere, meanwhile.
+                if inner.state.machine(machine).is_some_and(|m| m.target == target)
+                    && inner.state.set_machine_status(machine, found.status, found.detail, found.tmux, found.claude)
+                {
+                    self.emit(Event::State { state: inner.state.clone() });
+                }
+                Reply::Done
+            }
             other => return Ok(Err(other)),
         }))
     }
@@ -215,42 +268,75 @@ impl Hub {
             | Op::ListForwards
             | Op::StartForward { .. }
             | Op::StopForward { .. }
-            | Op::RemoveForward { .. } => Err("handled elsewhere".into()),
+            | Op::RemoveForward { .. }
+            | Op::CheckMachine { .. } => Err("handled elsewhere".into()),
             Op::GetState => Ok(Reply::State { state: inner.state.clone() }),
 
-            Op::CreateWorkspace { name, cwd, pane } => {
+            Op::CreateWorkspace { name, cwd, pane, machine: Some(machine) } => {
+                // The folder is on another machine: it cannot be looked at from
+                // here, and ssh says so in the pane if it is not there.
+                let cwd = validate::remote_cwd(&cwd).map_err(|r| r.0)?;
+                let name = name.as_deref().map(validate::name).transpose().map_err(|r| r.0)?;
+                // A bare `~` would otherwise be the workspace's name.
+                let name = name.or_else(|| (cwd.trim_end_matches('/') == "~").then(|| "home".to_string()));
+                let spec = self.checked_spec(&pane, true)?;
+                let created = inner.state.create_remote_workspace(machine, name, cwd, spec, now_ms()).map_err(e)?;
+                Ok(self.started(inner, created))
+            }
+            Op::CreateWorkspace { name, cwd, pane, machine: None } => {
                 let cwd = validate::cwd(&cwd).map_err(|r| r.0)?;
                 if !launch::is_dir(&cwd) {
                     return Err(format!("folder does not exist: {cwd}"));
                 }
                 let name = name.as_deref().map(validate::name).transpose().map_err(|r| r.0)?;
-                let spec = self.checked_spec(&pane)?;
+                let spec = self.checked_spec(&pane, false)?;
                 let created = inner.state.create_workspace(name, cwd, spec, now_ms());
                 Ok(self.started(inner, created))
             }
+            Op::AddMachine { label, target } => {
+                let target = validate::ssh_target(&target).map_err(|r| r.0)?;
+                let label = match label.as_deref().map(str::trim).filter(|l| !l.is_empty()) {
+                    Some(label) => validate::name(label).map_err(|r| r.0)?,
+                    // Like `ssh://you@host:22` -> `host`.
+                    None => default_machine_label(&target),
+                };
+                inner.state.add_machine(label, target).map_err(e)?;
+                self.changed(inner);
+                Ok(Reply::Done)
+            }
+            Op::RenameMachine { machine, label } => {
+                let label = validate::name(&label).map_err(|r| r.0)?;
+                self.done(inner, |s| s.rename_machine(machine, label))
+            }
+            Op::RemoveMachine { machine } => self.done(inner, |s| s.remove_machine(machine)),
             Op::CreateTab { workspace, name, pane } => {
                 let name = name.as_deref().filter(|n| !n.trim().is_empty()).map(validate::name).transpose().map_err(|r| r.0)?;
-                let spec = self.checked_spec(&pane)?;
+                let remote = inner.state.workspace(workspace).is_some_and(|w| w.machine.is_some());
+                let spec = self.checked_spec(&pane, remote)?;
                 let created = inner.state.create_tab(workspace, name, spec, now_ms()).map_err(e)?;
                 Ok(self.started(inner, created))
             }
             Op::SplitPane { target, dir, pane } => {
-                let spec = self.checked_spec(&pane)?;
+                let remote = inner.state.panes.get(&target).is_some_and(|p| p.machine.is_some());
+                let spec = self.checked_spec(&pane, remote)?;
                 let created = inner.state.split_pane(target, dir, spec, now_ms()).map_err(e)?;
                 Ok(self.started(inner, created))
             }
 
             Op::ClosePane { pane } => {
+                let far = remote_sessions(&inner.state);
                 let closed = inner.state.close_pane(pane).map_err(e)?;
-                Ok(self.closed(inner, closed, graveyard))
+                Ok(self.closed(inner, closed, far, graveyard))
             }
             Op::CloseTab { tab } => {
+                let far = remote_sessions(&inner.state);
                 let closed = inner.state.close_tab(tab).map_err(e)?;
-                Ok(self.closed(inner, closed, graveyard))
+                Ok(self.closed(inner, closed, far, graveyard))
             }
             Op::CloseWorkspace { workspace } => {
+                let far = remote_sessions(&inner.state);
                 let closed = inner.state.close_workspace(workspace).map_err(e)?;
-                Ok(self.closed(inner, closed, graveyard))
+                Ok(self.closed(inner, closed, far, graveyard))
             }
 
             Op::FocusPane { pane } => self.done(inner, |s| s.focus_pane(pane)),
@@ -332,11 +418,22 @@ impl Hub {
                 if !(2..=1000).contains(&cols) || !(1..=1000).contains(&rows) {
                     return Err("bad terminal size".into());
                 }
-                if let Some(rt) = inner.runtimes.get_mut(&pane) {
-                    if rt.screen.resize(cols, rows) {
-                        if let Some(process) = &rt.process {
-                            process.resize(cols, rows);
-                        }
+                if !inner.state.panes.contains_key(&pane) {
+                    return Err("no such pane".into());
+                }
+                // A pane that has not been started yet still has a size: the
+                // window shows it, and its program must start at that size.
+                let generation = inner.generation;
+                let rt = inner.runtimes.entry(pane).or_insert_with(|| Runtime {
+                    screen: Screen::default(),
+                    process: None,
+                    generation,
+                    sniffer: None,
+                    detect_dirty: false,
+                });
+                if rt.screen.resize(cols, rows) {
+                    if let Some(process) = &rt.process {
+                        process.resize(cols, rows);
                     }
                 }
                 Ok(Reply::Done)
@@ -381,7 +478,15 @@ impl Hub {
         Ok(Reply::Done)
     }
 
-    fn checked_spec(&self, raw: &PaneSpec) -> Result<PaneSpec, String> {
+    fn checked_spec(&self, raw: &PaneSpec, remote: bool) -> Result<PaneSpec, String> {
+        if remote {
+            if raw.kind == PaneKind::Cloud {
+                return Err("cloud tasks start from this computer; open one in a local workspace".into());
+            }
+            if raw.cwd.is_some() || raw.teleport.is_some() {
+                return Err("a pane on another machine opens in its workspace folder".into());
+            }
+        }
         let spec = validate::pane_spec(raw).map_err(|r| r.0)?;
         if let Some(cwd) = &spec.cwd {
             if !launch::is_dir(cwd) {
@@ -404,7 +509,24 @@ impl Hub {
         Reply::Created { created }
     }
 
-    fn closed(&self, inner: &mut Inner, closed: nmux_core::Closed, graveyard: &mut Graveyard) -> Reply {
+    fn closed(
+        &self,
+        inner: &mut Inner,
+        closed: nmux_core::Closed,
+        far: HashMap<PaneId, (String, String)>,
+        graveyard: &mut Graveyard,
+    ) -> Reply {
+        // Closing a pane ends its program. On another machine that program
+        // lives in tmux, which the dying ssh would leave running for ever.
+        let mut by_target: HashMap<String, Vec<String>> = HashMap::new();
+        for pane in &closed.panes {
+            if let Some((target, session)) = far.get(pane) {
+                by_target.entry(target.clone()).or_default().push(session.clone());
+            }
+        }
+        for (target, sessions) in by_target {
+            remote::end_sessions(target, sessions, self.config.env.clone());
+        }
         for pane in &closed.panes {
             if let Some(mut rt) = inner.runtimes.remove(pane) {
                 graveyard.extend(rt.process.take());
@@ -426,6 +548,14 @@ impl Hub {
         }
         let mut start = Start { resume: pane.kind == PaneKind::Claude, teleport: None, notice: None };
         match pane.kind {
+            // On another machine the transcripts cannot be read from here: the
+            // far side resumes, and starts afresh itself if there is nothing.
+            PaneKind::Claude if pane.machine.is_some() => {
+                if pane.claude_session_id.is_none() {
+                    pane.claude_session_id = Some(uuid::Uuid::new_v4().to_string());
+                    start.resume = false;
+                }
+            }
             PaneKind::Claude => {
                 let transcript = match (&pane.claude_session_id, &self.config.claude_dir) {
                     (None, _) => Transcript::Missing,
@@ -466,8 +596,23 @@ impl Hub {
     fn spawn(self: &Arc<Self>, inner: &mut Inner, id: PaneId, start: Start) {
         let Some(pane) = inner.state.panes.get(&id) else { return };
         let env = launch::pane_env(&self.config.env, id);
-        let command = match pane.kind {
-            PaneKind::Claude => launch::claude(
+        let far = pane.machine.map(|m| inner.state.machine(m).map(|m| m.target.clone()));
+        let command = match (&far, pane.kind) {
+            (Some(target), kind) => {
+                let program = match kind {
+                    PaneKind::Claude => remote::Program::Claude {
+                        session_id: pane.claude_session_id.as_deref().unwrap_or_default(),
+                        resume: start.resume,
+                        extra_args: &pane.extra_args,
+                        skip_permissions: pane.skip_permissions,
+                    },
+                    _ => remote::Program::Shell,
+                };
+                let session = remote::tmux_session(id, pane.created_at);
+                // A machine that was removed leaves nothing to connect to; ssh reports it.
+                remote::launch(target.as_deref().unwrap_or("removed-machine.invalid"), &remote::script(&pane.cwd, &session, &program), &env)
+            }
+            (None, PaneKind::Claude) => launch::claude(
                 ClaudeOptions {
                     session_id: pane.claude_session_id.as_deref().unwrap_or_default(),
                     resume: start.resume,
@@ -477,11 +622,12 @@ impl Hub {
                 },
                 &env,
             ),
-            PaneKind::Cloud => launch::cloud(pane.cloud_task.as_deref().unwrap_or_default(), &pane.extra_args, &env),
-            PaneKind::Shell => launch::shell(&env),
+            (None, PaneKind::Cloud) => launch::cloud(pane.cloud_task.as_deref().unwrap_or_default(), &pane.extra_args, &env),
+            (None, PaneKind::Shell) => launch::shell(&env),
         };
         let kind = pane.kind;
-        let cwd = pane.cwd.clone();
+        // The folder of a remote pane is not on this disk; ssh starts from the data folder.
+        let cwd = if far.is_some() { self.config.data_dir.to_string_lossy().into_owned() } else { pane.cwd.clone() };
 
         inner.generation += 1;
         let generation = inner.generation;

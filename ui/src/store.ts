@@ -5,7 +5,8 @@ import { terminals } from './terminals'
 import type { AgentState, Forward, Pane, PaneId, PaneKind, State, Tab, Workspace } from './types'
 
 export type Dialog =
-  | { type: 'workspace' }
+  | { type: 'workspace'; machine?: number }
+  | { type: 'machine' }
   | { type: 'tab'; workspace: number; kind: PaneKind }
   | { type: 'help' }
   | null
@@ -27,7 +28,7 @@ export interface Store {
 }
 
 let store: Store = {
-  state: { workspaces: [], panes: [] },
+  state: { workspaces: [], panes: [], machines: [] },
   panes: new Map(),
   connected: false,
   problem: null,
@@ -61,6 +62,7 @@ export function useStore<T>(select: (s: Store) => T): T {
 }
 
 function setState(state: State): void {
+  state.machines ??= []
   const panes = new Map(state.panes.map((p) => [p.id, p]))
   terminals.retain(panes)
   update({ state, panes })
@@ -83,6 +85,13 @@ export async function run(op: Parameters<typeof call>[0]): Promise<Awaited<Retur
   }
 }
 
+/** Ask the server to try every saved machine again. The answers arrive as state. */
+export function checkMachines(): void {
+  for (const machine of store.state.machines) {
+    if (machine.status !== 'checking') void call({ op: 'checkMachine', machine: machine.id }).catch(() => {})
+  }
+}
+
 async function refresh(): Promise<void> {
   try {
     const reply = await call({ op: 'getState' })
@@ -92,6 +101,7 @@ async function refresh(): Promise<void> {
     const forwards = await call({ op: 'listForwards' })
     if (forwards.kind === 'forwards') update({ forwards: forwards.forwards })
     void call({ op: 'setWindowVisible', visible: !document.hidden })
+    checkMachines()
   } catch (err) {
     update({ connected: false, problem: String(err) })
   }
@@ -122,6 +132,10 @@ export async function start(): Promise<void> {
   document.addEventListener('visibilitychange', () => {
     if (store.connected) void call({ op: 'setWindowVisible', visible: !document.hidden }).catch(() => {})
   })
+  // A machine that went away, or came back, shows within a minute.
+  window.setInterval(() => {
+    if (store.connected && !document.hidden) checkMachines()
+  }, 60_000)
   // The shell may have connected before this page was listening.
   await refresh()
 }

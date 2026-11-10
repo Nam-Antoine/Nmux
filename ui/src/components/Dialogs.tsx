@@ -1,13 +1,13 @@
 import { useEffect, useState } from 'react'
 import { pickFolder } from '../api'
 import { BINDINGS } from '../keys'
-import { run, update, useStore } from '../store'
-import type { PaneKind, PaneSpec } from '../types'
+import { getStore, run, update, useStore } from '../store'
+import type { Machine, PaneKind, PaneSpec } from '../types'
 import { FolderIcon, KIND_LABEL, KindIcon } from './icons'
 
 const KINDS: PaneKind[] = ['claude', 'shell', 'cloud']
 
-function NewPane({ workspace, initialKind }: { workspace?: number; initialKind: PaneKind }): React.JSX.Element {
+function NewPane({ workspace, initialKind, machine }: { workspace?: number; initialKind: PaneKind; machine?: Machine }): React.JSX.Element {
   const [cwd, setCwd] = useState('')
   const [kind, setKind] = useState<PaneKind>(initialKind)
   const [skip, setSkip] = useState(false)
@@ -27,7 +27,7 @@ function NewPane({ workspace, initialKind }: { workspace?: number; initialKind: 
     const extra = args.trim().split(/\s+/).filter(Boolean)
     if (kind !== 'shell' && extra.length > 0) pane.extraArgs = extra
     const reply = needsFolder
-      ? await run({ op: 'createWorkspace', cwd: cwd.trim(), pane })
+      ? await run({ op: 'createWorkspace', cwd: cwd.trim(), pane, machine: machine?.id })
       : await run({ op: 'createTab', workspace, pane })
     setBusy(false)
     if (reply) update({ dialog: null })
@@ -41,9 +41,22 @@ function NewPane({ workspace, initialKind }: { workspace?: number; initialKind: 
         void submit()
       }}
     >
-      <h2>{needsFolder ? 'New workspace' : 'New tab'}</h2>
+      <h2>{machine ? `New workspace on ${machine.label}` : needsFolder ? 'New workspace' : 'New tab'}</h2>
 
-      {needsFolder && (
+      {machine && (
+        <label>
+          <span>Folder on {machine.label}</span>
+          <input value={cwd} onChange={(e) => setCwd(e.target.value)} placeholder="~/project or /srv/app" autoFocus spellCheck={false} />
+          <span className="muted small">
+            {machine.status === 'online' && !machine.tmux
+              ? 'tmux is not installed there, so panes stop when the connection drops. Install tmux to keep them running.'
+              : 'Panes run there inside tmux and keep going when the connection drops or Nmux closes.'}
+            {machine.status === 'online' && !machine.claude && ' Claude Code was not found on that machine.'}
+          </span>
+        </label>
+      )}
+
+      {needsFolder && !machine && (
         <label>
           <span>Project folder</span>
           <div className="row">
@@ -65,7 +78,7 @@ function NewPane({ workspace, initialKind }: { workspace?: number; initialKind: 
       <div className="field">
         <span>Start with</span>
         <div className="segmented">
-          {KINDS.map((k) => (
+          {KINDS.filter((k) => !machine || k !== 'cloud').map((k) => (
             <button type="button" key={k} className={k === kind ? 'on' : ''} onClick={() => setKind(k)}>
               <KindIcon kind={k} /> {KIND_LABEL[k]}
             </button>
@@ -121,6 +134,69 @@ function NewPane({ workspace, initialKind }: { workspace?: number; initialKind: 
   )
 }
 
+function AddMachine(): React.JSX.Element {
+  const [target, setTarget] = useState('')
+  const [label, setLabel] = useState('')
+  const [busy, setBusy] = useState(false)
+  const ready = target.trim() !== '' && !busy
+
+  const submit = async (): Promise<void> => {
+    if (!ready) return
+    setBusy(true)
+    const before = new Set(getStore().state.machines.map((m) => m.id))
+    const reply = await run({ op: 'addMachine', target: target.trim(), label: label.trim() || undefined })
+    setBusy(false)
+    if (!reply) return
+    update({ dialog: null })
+    // Try it at once, so the sidebar says whether it can be reached.
+    window.setTimeout(() => {
+      const added = getStore().state.machines.find((m) => !before.has(m.id))
+      if (added) void run({ op: 'checkMachine', machine: added.id })
+    }, 150)
+  }
+
+  return (
+    <form
+      className="dialog"
+      onSubmit={(e) => {
+        e.preventDefault()
+        void submit()
+      }}
+    >
+      <h2>Add machine</h2>
+      <p className="muted">
+        Work on another computer over SSH, next to your local workspaces. Nmux runs your own <code>ssh</code>, with your
+        config and keys.
+      </p>
+      <label>
+        <span>SSH target</span>
+        <input value={target} onChange={(e) => setTarget(e.target.value)} placeholder="workbox, you@server or ssh://you@server:2222" autoFocus spellCheck={false} />
+        <span className="muted small">
+          Whatever you type after <code>ssh</code> in a terminal. Check that it connects there first.
+        </span>
+      </label>
+      <label>
+        <span>
+          Name <span className="muted">(optional)</span>
+        </span>
+        <input value={label} onChange={(e) => setLabel(e.target.value)} placeholder="The host name" maxLength={80} />
+      </label>
+      <span className="muted small">
+        Nothing is installed on the machine. With tmux there, panes keep running when the connection drops. A password
+        or key passphrase is asked for inside the pane.
+      </span>
+      <div className="row end">
+        <button type="button" className="btn" onClick={() => update({ dialog: null })}>
+          Cancel
+        </button>
+        <button type="submit" className="btn primary" disabled={!ready}>
+          {busy ? 'Adding…' : 'Add'}
+        </button>
+      </div>
+    </form>
+  )
+}
+
 function Help(): React.JSX.Element {
   return (
     <div className="dialog">
@@ -145,6 +221,7 @@ function Help(): React.JSX.Element {
 
 export function Dialogs(): React.JSX.Element | null {
   const dialog = useStore((s) => s.dialog)
+  const machines = useStore((s) => s.state.machines)
   useEffect(() => {
     if (!dialog) return
     const onKey = (e: KeyboardEvent): void => {
@@ -158,8 +235,10 @@ export function Dialogs(): React.JSX.Element | null {
     <div className="backdrop" onMouseDown={(e) => e.target === e.currentTarget && update({ dialog: null })}>
       {dialog.type === 'help' ? (
         <Help />
+      ) : dialog.type === 'machine' ? (
+        <AddMachine />
       ) : dialog.type === 'workspace' ? (
-        <NewPane initialKind="claude" />
+        <NewPane initialKind="claude" machine={machines.find((m) => m.id === dialog.machine)} />
       ) : (
         <NewPane workspace={dialog.workspace} initialKind={dialog.kind} />
       )}

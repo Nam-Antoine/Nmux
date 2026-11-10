@@ -9,6 +9,7 @@ pub mod launch;
 pub mod persist;
 pub mod ports;
 pub mod pty;
+pub mod remote;
 pub mod screen;
 pub mod serve;
 pub mod transcripts;

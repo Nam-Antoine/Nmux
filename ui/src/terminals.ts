@@ -13,10 +13,10 @@ import { toast } from './store'
 import type { Pane, PaneId } from './types'
 
 export const terminalTheme = {
-  background: '#0e0f11',
+  background: '#17191d',
   foreground: '#d7dae0',
   cursor: '#d7dae0',
-  cursorAccent: '#0e0f11',
+  cursorAccent: '#17191d',
   selectionBackground: '#2f3644',
   black: '#1b1f2a',
   red: '#f07178',
@@ -60,9 +60,9 @@ function create(pane: PaneId): Entry {
   const term = new Terminal({
     allowProposedApi: true,
     cursorBlink: true,
-    cursorStyle: 'bar',
-    fontFamily: '"Cascadia Mono", "Cascadia Code", Consolas, "Courier New", monospace',
-    fontSize: 13,
+    cursorStyle: 'block',
+    fontFamily: '"Geist Mono Variable", "Cascadia Mono", Consolas, "Courier New", monospace',
+    fontSize: 14,
     lineHeight: 1.2,
     scrollback: 5000,
     theme: terminalTheme,
@@ -200,6 +200,14 @@ export const terminals = {
     const entry = entries.get(pane)
     if (entry) entry.term.paste(text)
     else send({ op: 'write', pane, data: text })
+  },
+
+  /** Send the size again: a program that has just started must learn it. */
+  resync(pane: PaneId): void {
+    const entry = entries.get(pane)
+    if (!entry) return
+    entry.sent = { cols: 0, rows: 0 }
+    syncSize(pane, entry)
   },
 
   focus(pane: PaneId): void {

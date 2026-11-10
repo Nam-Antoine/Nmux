@@ -36,11 +36,45 @@ export const FolderIcon = () => (
   <svg {...base}><path d="M2.5 5a1.5 1.5 0 011.5-1.5h2.2l1.3 1.5H12A1.5 1.5 0 0113.5 6.5v4.5A1.5 1.5 0 0112 12.5H4A1.5 1.5 0 012.5 11z" /></svg>
 )
 
+export const Play = () => (
+  <svg {...base} fill="currentColor" stroke="none"><path d="M5.2 3.4v9.2a.5.5 0 00.77.42l7-4.6a.5.5 0 000-.84l-7-4.6a.5.5 0 00-.77.42z" /></svg>
+)
+export const Search = () => (
+  <svg {...base}><circle cx="7.2" cy="7.2" r="4.2" /><path d="M10.4 10.4l3 3" /></svg>
+)
+export const Clock = () => (
+  <svg {...base}><circle cx="8" cy="8" r="5.6" /><path d="M8 4.8V8l2.2 1.4" /></svg>
+)
+export const Monitor = () => (
+  <svg {...base}><rect x="2" y="3" width="12" height="8" rx="1.5" /><path d="M6 13.5h4M8 11v2.5" /></svg>
+)
+export const ServerIcon = () => (
+  <svg {...base}><rect x="2.5" y="3" width="11" height="4.2" rx="1.2" /><rect x="2.5" y="8.8" width="11" height="4.2" rx="1.2" /></svg>
+)
+export const Gear = () => (
+  <svg {...base}>
+    <circle cx="8" cy="8" r="2" />
+    <path d="M8 1.8l1.1 1.6 1.9-.4.6 1.9 1.8.8-.6 1.8.9 1.7-1.6 1.1-.2 2-1.9.1L8 14.2l-1.9-1.8-1.9-.1-.2-2-1.6-1.1.9-1.7-.6-1.8 1.8-.8.6-1.9 1.9.4z" />
+  </svg>
+)
+export const Keyboard = () => (
+  <svg {...base}><rect x="1.8" y="4" width="12.4" height="8" rx="1.6" /><path d="M4.5 6.8h.01M7 6.8h.01M9.5 6.8h.01M11.6 6.8h.01M5 9.5h6" /></svg>
+)
+export const WinMin = () => (
+  <svg {...base} strokeWidth={1.1}><path d="M3 8.5h10" /></svg>
+)
+export const WinMax = () => (
+  <svg {...base} strokeWidth={1.1}><rect x="3" y="5" width="8" height="8" rx="1" /><path d="M5.5 5V3.6a.6.6 0 01.6-.6h6.3a.6.6 0 01.6.6v6.3a.6.6 0 01-.6.6H11" /></svg>
+)
+export const WinClose = () => (
+  <svg {...base} strokeWidth={1.1}><path d="M3.5 3.5l9 9M12.5 3.5l-9 9" /></svg>
+)
+
 /** What kind of thing runs in a pane. */
 export function KindIcon({ kind }: { kind: PaneKind }): React.JSX.Element {
   if (kind === 'shell') {
     return (
-      <svg {...base} className="kind-icon shell"><path d="M3.5 5l3 3-3 3M8.5 11h4" /></svg>
+      <svg {...base} className="kind-icon shell"><rect x="2.2" y="2.7" width="11.6" height="10.6" rx="1.8" /><path d="M5 6.2l1.8 1.6L5 9.4M8.4 10h2.4" /></svg>
     )
   }
   if (kind === 'cloud') {
@@ -48,9 +82,13 @@ export function KindIcon({ kind }: { kind: PaneKind }): React.JSX.Element {
       <svg {...base} className="kind-icon cloud"><path d="M4.8 12a2.6 2.6 0 01-.3-5.2 3.6 3.6 0 017 .8A2.2 2.2 0 0111.4 12z" /></svg>
     )
   }
+  // A small pixel creature, in the manner of terminal agent mascots.
   return (
-    <svg {...base} className="kind-icon claude" strokeWidth={1.7}>
-      <path d="M8 2.5v11M2.5 8h11M4.1 4.1l7.8 7.8M11.9 4.1l-7.8 7.8" />
+    <svg width="16" height="13" viewBox="0 0 20 16" className="kind-icon claude" fill="currentColor" shapeRendering="crispEdges">
+      <path d="M3 3h14v8H3z" />
+      <path d="M0 6h3v3H0zM17 6h3v3h-3z" />
+      <path d="M4 11h2v3H4zM7 11h2v3H7zM11 11h2v3h-2zM14 11h2v3h-2z" />
+      <path d="M6 5h1.5v2.5H6zM12.5 5H14v2.5h-1.5z" fill="var(--side)" />
     </svg>
   )
 }

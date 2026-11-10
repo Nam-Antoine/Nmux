@@ -167,8 +167,13 @@ fn main() {
     let data_dir = custom.or_else(nmux_server::default_data_dir).expect("no data directory for Nmux");
     let bridge = Arc::new(Bridge { client: RwLock::new(None), data_dir, custom_dir });
 
-    tauri::Builder::default()
-        .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| show_main(app)))
+    let mut builder = tauri::Builder::default();
+    // One window per data directory: a run on its own NMUX_DATA_DIR (tests,
+    // a second profile) must not be handed over to the main instance.
+    if !custom_dir {
+        builder = builder.plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| show_main(app)));
+    }
+    builder
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_notification::init())
         .plugin(tauri_plugin_opener::init())

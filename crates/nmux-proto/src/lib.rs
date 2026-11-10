@@ -4,7 +4,7 @@
 //! keeps the protocol readable in a log and trivial to speak from another
 //! language; terminal output dominates the traffic and is text already.
 
-use nmux_core::{Closed, Created, Dir, PaneId, PaneSpec, Side, State, TabId, WorkspaceId};
+use nmux_core::{Closed, Created, Dir, MachineId, PaneId, PaneSpec, Side, State, TabId, WorkspaceId};
 use serde::{Deserialize, Serialize};
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 
@@ -33,7 +33,23 @@ pub enum Op {
     GetState,
 
     #[serde(rename_all = "camelCase")]
-    CreateWorkspace { name: Option<String>, cwd: String, pane: PaneSpec },
+    CreateWorkspace {
+        name: Option<String>,
+        cwd: String,
+        pane: PaneSpec,
+        /// The folder is on this saved machine, not on this computer.
+        #[serde(default)]
+        machine: Option<MachineId>,
+    },
+
+    /// Save another computer, reached with `ssh <target>`.
+    #[serde(rename_all = "camelCase")]
+    AddMachine { label: Option<String>, target: String },
+    RenameMachine { machine: MachineId, label: String },
+    /// Forget a machine. Nothing is stopped on it.
+    RemoveMachine { machine: MachineId },
+    /// Try to connect, without prompting, and report what is there.
+    CheckMachine { machine: MachineId },
     #[serde(rename_all = "camelCase")]
     CreateTab { workspace: WorkspaceId, name: Option<String>, pane: PaneSpec },
     #[serde(rename_all = "camelCase")]
@@ -280,7 +296,7 @@ mod tests {
         let (mut a, mut b) = tokio::io::duplex(1024);
         let req = Request {
             id: 1,
-            op: Op::CreateWorkspace { name: None, cwd: "C:\\x".into(), pane: PaneSpec::new(PaneKind::Shell) },
+            op: Op::CreateWorkspace { name: None, cwd: "C:\\x".into(), pane: PaneSpec::new(PaneKind::Shell), machine: None },
         };
         write_frame(&mut a, &req).await.unwrap();
         assert_eq!(read_frame::<_, Request>(&mut b).await.unwrap(), Some(req));

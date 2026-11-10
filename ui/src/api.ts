@@ -2,6 +2,7 @@
 import { invoke } from '@tauri-apps/api/core'
 import { listen } from '@tauri-apps/api/event'
 import { getCurrentWebview } from '@tauri-apps/api/webview'
+import { getCurrentWindow } from '@tauri-apps/api/window'
 import { open } from '@tauri-apps/plugin-dialog'
 import { isPermissionGranted, requestPermission, sendNotification } from '@tauri-apps/plugin-notification'
 import type { Op, Reply, ServerEvent } from './types'
@@ -66,4 +67,12 @@ export function onFileDrop(handler: (paths: string[], x: number, y: number) => v
     const { paths, position } = event.payload
     handler(paths, position.x / window.devicePixelRatio, position.y / window.devicePixelRatio)
   })
+}
+
+/** The window has no system title bar; these stand in for its buttons. */
+export const appWindow = {
+  minimize: (): void => void getCurrentWindow().minimize(),
+  toggleMaximize: (): void => void getCurrentWindow().toggleMaximize(),
+  /** Hides to the tray; panes keep running. */
+  close: (): void => void getCurrentWindow().close()
 }

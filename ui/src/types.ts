@@ -3,6 +3,7 @@
 export type PaneId = number
 export type TabId = number
 export type WorkspaceId = number
+export type MachineId = number
 
 export type PaneKind = 'claude' | 'shell' | 'cloud'
 export type PaneStatus = 'running' | 'exited'
@@ -13,6 +14,19 @@ export type Side = 'left' | 'right' | 'up' | 'down'
 export type LayoutNode =
   | { type: 'leaf'; pane: PaneId }
   | { type: 'split'; dir: Dir; ratio: number; a: LayoutNode; b: LayoutNode }
+
+export type MachineStatus = 'unknown' | 'checking' | 'online' | 'auth' | 'error'
+
+/** Another computer, reached with the user's own ssh. */
+export interface Machine {
+  id: MachineId
+  label: string
+  target: string
+  status: MachineStatus
+  detail?: string
+  tmux: boolean
+  claude: boolean
+}
 
 export interface Pane {
   id: PaneId
@@ -29,6 +43,7 @@ export interface Pane {
   cloudSessionId?: string
   cloudUrl?: string
   teleportedFrom?: string
+  machine?: MachineId
   createdAt: number
 }
 
@@ -46,12 +61,14 @@ export interface Workspace {
   cwd: string
   tabs: Tab[]
   activeTab: TabId
+  machine?: MachineId
 }
 
 export interface State {
   workspaces: Workspace[]
   panes: Pane[]
   activeWorkspace?: WorkspaceId
+  machines: Machine[]
 }
 
 export interface PaneSpec {
@@ -65,7 +82,11 @@ export interface PaneSpec {
 
 export type Op =
   | { op: 'getState' }
-  | { op: 'createWorkspace'; name?: string; cwd: string; pane: PaneSpec }
+  | { op: 'createWorkspace'; name?: string; cwd: string; pane: PaneSpec; machine?: MachineId }
+  | { op: 'addMachine'; label?: string; target: string }
+  | { op: 'renameMachine'; machine: MachineId; label: string }
+  | { op: 'removeMachine'; machine: MachineId }
+  | { op: 'checkMachine'; machine: MachineId }
   | { op: 'createTab'; workspace: WorkspaceId; name?: string; pane: PaneSpec }
   | { op: 'splitPane'; target: PaneId; dir: Dir; pane: PaneSpec }
   | { op: 'closePane'; pane: PaneId }

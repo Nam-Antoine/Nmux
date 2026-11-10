@@ -53,6 +53,38 @@ pub fn cwd(raw: &str) -> Result<String, Rejected> {
     Ok(p.to_string())
 }
 
+/// A folder on another machine: absolute, or under the home folder (`~`).
+/// It is quoted for the remote shell where it is used; this keeps it sane.
+pub fn remote_cwd(raw: &str) -> Result<String, Rejected> {
+    let p = raw.trim();
+    if p.is_empty() || p.len() > MAX_PATH {
+        return reject("folder path is empty or too long");
+    }
+    if has_control(p, false) {
+        return reject("folder path has control characters");
+    }
+    if !(p.starts_with('/') || p == "~" || p.starts_with("~/")) {
+        return reject("a folder on another machine must start with / or ~");
+    }
+    Ok(p.to_string())
+}
+
+/// What goes after `ssh`: an alias from `~/.ssh/config`, `user@host`, or
+/// `ssh://user@host:port`. It becomes one argument and must not look like an option.
+pub fn ssh_target(raw: &str) -> Result<String, Rejected> {
+    let t = raw.trim();
+    if t.is_empty() || t.len() > 255 {
+        return reject("ssh target is empty or too long");
+    }
+    if t.starts_with('-') {
+        return reject("ssh target must not start with a dash");
+    }
+    if !t.chars().all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '-' | '@' | ':' | '/' | '[' | ']' | '%')) {
+        return reject("ssh target has characters that do not belong in a host name");
+    }
+    Ok(t.to_string())
+}
+
 /// Extra arguments for `claude`. Each one becomes its own argv entry, so
 /// there is no quoting to escape from; this only keeps them sane.
 pub fn extra_args(raw: &[String]) -> Result<Vec<String>, Rejected> {

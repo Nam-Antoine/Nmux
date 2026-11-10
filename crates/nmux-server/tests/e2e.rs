@@ -57,17 +57,18 @@ async fn a_shell_pane_runs_survives_reattach_and_is_restored() {
     assert!(nmux_server::run(config(dir.path())).await.is_err());
 
     // Bad input never reaches a process.
-    let bad = Op::CreateWorkspace { name: None, cwd: "relative".into(), pane: PaneSpec::new(PaneKind::Shell) };
+    let bad = Op::CreateWorkspace { name: None, cwd: "relative".into(), pane: PaneSpec::new(PaneKind::Shell), machine: None };
     assert!(client.call(bad).await.is_err());
     let missing = Op::CreateWorkspace {
         name: None,
         cwd: dir.path().join("nope").to_string_lossy().into_owned(),
         pane: PaneSpec::new(PaneKind::Shell),
+        machine: None,
     };
     assert!(client.call(missing).await.unwrap_err().contains("does not exist"));
 
     let created = match client
-        .call(Op::CreateWorkspace { name: Some("demo".into()), cwd: cwd.clone(), pane: PaneSpec::new(PaneKind::Shell) })
+        .call(Op::CreateWorkspace { name: Some("demo".into()), cwd: cwd.clone(), pane: PaneSpec::new(PaneKind::Shell), machine: None })
         .await
         .unwrap()
     {
@@ -126,6 +127,15 @@ async fn a_shell_pane_runs_survives_reattach_and_is_restored() {
     assert_eq!(restored.workspaces.len(), 1);
     assert_eq!(restored.workspaces[0].name, "demo");
     assert_eq!(restored.panes[&pane].status, PaneStatus::Exited);
+
+    // A window sizes a pane before it is started; the program starts at that size.
+    client.call(Op::Resize { pane, cols: 57, rows: 30 }).await.unwrap();
+    assert!(client.call(Op::Resize { pane: PaneId(9999), cols: 57, rows: 30 }).await.is_err());
+    client.call(Op::RestartPane { pane }).await.unwrap();
+    match client.call(Op::Attach { pane }).await.unwrap() {
+        Reply::Attached { snapshot } => assert_eq!((snapshot.cols, snapshot.rows), (57, 30)),
+        other => panic!("{other:?}"),
+    }
     client.call(Op::Shutdown).await.unwrap();
     let _ = tokio::time::timeout(Duration::from_secs(10), server).await;
 }
@@ -160,7 +170,7 @@ async fn ports_and_files_belong_to_their_workspace() {
     let (server, client, mut events) = start(dir.path()).await;
 
     let created = match client
-        .call(Op::CreateWorkspace { name: None, cwd: project.to_string_lossy().into_owned(), pane: PaneSpec::new(PaneKind::Shell) })
+        .call(Op::CreateWorkspace { name: None, cwd: project.to_string_lossy().into_owned(), pane: PaneSpec::new(PaneKind::Shell), machine: None })
         .await
         .unwrap()
     {
@@ -189,6 +199,55 @@ async fn ports_and_files_belong_to_their_workspace() {
     let mine = ports.iter().find(|p| p.port == port).unwrap_or_else(|| panic!("port {port} not in {} ports; seen {seen:?}", ports.len()));
     assert_eq!(mine.pane, Some(pane), "{mine:?}");
     assert_eq!(ports[0].pane, Some(pane), "ports of panes come first");
+
+    client.call(Op::Shutdown).await.unwrap();
+    let _ = tokio::time::timeout(Duration::from_secs(10), server).await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn machines_are_saved_and_hold_remote_workspaces() {
+    let dir = tempfile::tempdir().unwrap();
+    let (server, client, _events) = start(dir.path()).await;
+
+    // A target must not be able to pass for an ssh option.
+    assert!(client.call(Op::AddMachine { label: None, target: "-oProxyCommand=calc".into() }).await.is_err());
+    assert!(client.call(Op::AddMachine { label: None, target: "host; rm -rf ~".into() }).await.is_err());
+
+    // `.invalid` never resolves, so nothing leaves this computer.
+    client.call(Op::AddMachine { label: None, target: "ssh://me@nmux-test.invalid:2222".into() }).await.unwrap();
+    let machine = state(&client).await.machines[0].clone();
+    assert_eq!(machine.label, "nmux-test.invalid");
+    assert!(client.call(Op::AddMachine { label: Some("NMUX-test.invalid".into()), target: "other".into() }).await.is_err());
+    client.call(Op::RenameMachine { machine: machine.id, label: "box".into() }).await.unwrap();
+
+    let remote = |cwd: &str, kind| Op::CreateWorkspace {
+        name: None,
+        cwd: cwd.into(),
+        pane: PaneSpec::new(kind),
+        machine: Some(machine.id),
+    };
+    assert!(client.call(remote("relative/path", PaneKind::Shell)).await.unwrap_err().contains("start with / or ~"));
+    let mut cloud = PaneSpec::new(PaneKind::Cloud);
+    cloud.cloud_task = Some("do it".into());
+    let op = Op::CreateWorkspace { name: None, cwd: "~/proj".into(), pane: cloud, machine: Some(machine.id) };
+    assert!(client.call(op).await.unwrap_err().contains("this computer"));
+
+    // The folder is not checked on this disk; the pane belongs to the machine.
+    let created = match client.call(remote("~/my proj", PaneKind::Claude)).await.unwrap() {
+        Reply::Created { created } => created,
+        other => panic!("{other:?}"),
+    };
+    let now = state(&client).await;
+    assert_eq!(now.workspaces[0].machine, Some(machine.id));
+    assert_eq!(now.workspaces[0].name, "my proj");
+    assert_eq!(now.panes[&created.pane].machine, Some(machine.id));
+    assert!(now.panes[&created.pane].claude_session_id.is_some());
+
+    // A machine in use cannot be forgotten; once empty it can.
+    assert!(client.call(Op::RemoveMachine { machine: machine.id }).await.unwrap_err().contains("workspaces first"));
+    client.call(Op::CloseWorkspace { workspace: created.workspace }).await.unwrap();
+    client.call(Op::RemoveMachine { machine: machine.id }).await.unwrap();
+    assert!(state(&client).await.machines.is_empty());
 
     client.call(Op::Shutdown).await.unwrap();
     let _ = tokio::time::timeout(Duration::from_secs(10), server).await;

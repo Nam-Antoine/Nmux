@@ -17,6 +17,44 @@ pub struct WorkspaceId(pub u32);
 
 #[derive(Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Debug, Serialize, Deserialize)]
 #[serde(transparent)]
+pub struct MachineId(pub u32);
+
+/// What the last connection check of a machine found. Never trusted from disk.
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum MachineStatus {
+    #[default]
+    Unknown,
+    Checking,
+    Online,
+    /// Reachable, but it wants a password or a key Nmux cannot give unattended.
+    Auth,
+    Error,
+}
+
+/// Another computer, reached with the user's own `ssh`. Nmux keeps the
+/// target and a label; keys and passwords stay with OpenSSH.
+#[derive(Clone, PartialEq, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Machine {
+    pub id: MachineId,
+    pub label: String,
+    /// What goes after `ssh`: a config alias, `user@host`, or `ssh://user@host:port`.
+    pub target: String,
+    #[serde(default)]
+    pub status: MachineStatus,
+    /// Why it is not online, in ssh's words.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub detail: Option<String>,
+    /// tmux is there, so panes outlive a dropped connection.
+    #[serde(default)]
+    pub tmux: bool,
+    #[serde(default)]
+    pub claude: bool,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Debug, Serialize, Deserialize)]
+#[serde(transparent)]
 pub struct TabId(pub u32);
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Serialize, Deserialize)]
@@ -101,6 +139,9 @@ pub struct Pane {
     /// Cloud session this Claude pane was teleported from.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub teleported_from: Option<String>,
+    /// Runs on this machine over ssh; `None` is this computer.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub machine: Option<MachineId>,
     /// Milliseconds since the Unix epoch.
     pub created_at: u64,
 }
@@ -161,6 +202,9 @@ pub struct Workspace {
     pub cwd: String,
     pub tabs: Vec<Tab>,
     pub active_tab: TabId,
+    /// The folder is on this machine; `None` is this computer.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub machine: Option<MachineId>,
 }
 
 #[derive(Clone, PartialEq, Debug, Default, Serialize, Deserialize)]
@@ -173,6 +217,8 @@ pub struct State {
     pub panes: BTreeMap<PaneId, Pane>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub active_workspace: Option<WorkspaceId>,
+    #[serde(default)]
+    pub machines: Vec<Machine>,
     /// One counter for every kind of id, so an id is never reused.
     #[serde(default)]
     pub next_id: u32,
@@ -257,7 +303,7 @@ impl State {
         Ok(&mut self.workspaces[wi].tabs[ti])
     }
 
-    fn new_pane(&mut self, spec: PaneSpec, workspace_cwd: &str, now: u64) -> Pane {
+    fn new_pane(&mut self, spec: PaneSpec, workspace_cwd: &str, machine: Option<MachineId>, now: u64) -> Pane {
         let id = PaneId(self.fresh_id());
         let name = spec.name.filter(|n| !n.trim().is_empty()).unwrap_or_else(|| match spec.kind {
             PaneKind::Claude => "claude".to_string(),
@@ -284,13 +330,40 @@ impl State {
             cloud_session_id: None,
             cloud_url: None,
             teleported_from: spec.teleport,
+            machine,
             created_at: now,
         }
     }
 
     /// New workspace with one tab holding one pane. It becomes the active one.
     pub fn create_workspace(&mut self, name: Option<String>, cwd: String, spec: PaneSpec, now: u64) -> Created {
-        let pane = self.new_pane(spec, &cwd, now);
+        self.create_workspace_on(None, name, cwd, spec, now)
+    }
+
+    /// The same, for a folder on a saved machine.
+    pub fn create_remote_workspace(
+        &mut self,
+        machine: MachineId,
+        name: Option<String>,
+        cwd: String,
+        spec: PaneSpec,
+        now: u64,
+    ) -> Res<Created> {
+        if self.machine(machine).is_none() {
+            return Err(ModelError::Invalid("no such machine"));
+        }
+        Ok(self.create_workspace_on(Some(machine), name, cwd, spec, now))
+    }
+
+    fn create_workspace_on(
+        &mut self,
+        machine: Option<MachineId>,
+        name: Option<String>,
+        cwd: String,
+        spec: PaneSpec,
+        now: u64,
+    ) -> Created {
+        let pane = self.new_pane(spec, &cwd, machine, now);
         let pane_id = pane.id;
         self.panes.insert(pane_id, pane);
         let tab = TabId(self.fresh_id());
@@ -302,6 +375,7 @@ impl State {
             cwd,
             tabs: vec![Tab { id: tab, name: None, layout: Node::leaf(pane_id), focused: pane_id, zoomed: false }],
             active_tab: tab,
+            machine,
         });
         self.active_workspace = Some(workspace);
         Created { workspace, tab, pane: pane_id }
@@ -309,8 +383,9 @@ impl State {
 
     /// New tab at the end of a workspace, holding one pane. It becomes active.
     pub fn create_tab(&mut self, workspace: WorkspaceId, name: Option<String>, spec: PaneSpec, now: u64) -> Res<Created> {
-        let cwd = self.workspace(workspace).ok_or(ModelError::NoWorkspace)?.cwd.clone();
-        let pane = self.new_pane(spec, &cwd, now);
+        let ws = self.workspace(workspace).ok_or(ModelError::NoWorkspace)?;
+        let (cwd, machine) = (ws.cwd.clone(), ws.machine);
+        let pane = self.new_pane(spec, &cwd, machine, now);
         let pane_id = pane.id;
         self.panes.insert(pane_id, pane);
         let tab = TabId(self.fresh_id());
@@ -330,8 +405,8 @@ impl State {
     /// Split `target`; the new pane takes the right/bottom half and the focus.
     pub fn split_pane(&mut self, target: PaneId, dir: Dir, spec: PaneSpec, now: u64) -> Res<Created> {
         let (wi, ti) = self.locate(target).ok_or(ModelError::NoPane)?;
-        let cwd = self.workspaces[wi].cwd.clone();
-        let pane = self.new_pane(spec, &cwd, now);
+        let (cwd, machine) = (self.workspaces[wi].cwd.clone(), self.workspaces[wi].machine);
+        let pane = self.new_pane(spec, &cwd, machine, now);
         let pane_id = pane.id;
         self.panes.insert(pane_id, pane);
         let ws = &mut self.workspaces[wi];
@@ -562,7 +637,78 @@ impl State {
 
     /// Make a state read from disk safe to run on: nothing is running yet,
     /// and any structure that does not hold together is dropped.
+    pub fn machine(&self, id: MachineId) -> Option<&Machine> {
+        self.machines.iter().find(|m| m.id == id)
+    }
+
+    /// Save a machine. Labels are how the user tells machines apart, so they are unique.
+    pub fn add_machine(&mut self, label: String, target: String) -> Res<MachineId> {
+        if self.machines.iter().any(|m| m.label.eq_ignore_ascii_case(&label)) {
+            return Err(ModelError::Invalid("a machine with that name already exists"));
+        }
+        let id = MachineId(self.fresh_id());
+        self.machines.push(Machine {
+            id,
+            label,
+            target,
+            status: MachineStatus::Unknown,
+            detail: None,
+            tmux: false,
+            claude: false,
+        });
+        Ok(id)
+    }
+
+    pub fn rename_machine(&mut self, id: MachineId, label: String) -> Res<()> {
+        if self.machines.iter().any(|m| m.id != id && m.label.eq_ignore_ascii_case(&label)) {
+            return Err(ModelError::Invalid("a machine with that name already exists"));
+        }
+        let machine = self.machines.iter_mut().find(|m| m.id == id).ok_or(ModelError::Invalid("no such machine"))?;
+        machine.label = label;
+        Ok(())
+    }
+
+    /// Forget a machine. Its workspaces must be closed first, so nothing is
+    /// left pointing at a machine that is gone.
+    pub fn remove_machine(&mut self, id: MachineId) -> Res<()> {
+        if self.machine(id).is_none() {
+            return Err(ModelError::Invalid("no such machine"));
+        }
+        if self.workspaces.iter().any(|w| w.machine == Some(id)) {
+            return Err(ModelError::Invalid("close this machine's workspaces first"));
+        }
+        self.machines.retain(|m| m.id != id);
+        Ok(())
+    }
+
+    /// Record a connection check. Returns whether anything changed.
+    pub fn set_machine_status(
+        &mut self,
+        id: MachineId,
+        status: MachineStatus,
+        detail: Option<String>,
+        tmux: bool,
+        claude: bool,
+    ) -> bool {
+        let Some(machine) = self.machines.iter_mut().find(|m| m.id == id) else { return false };
+        let before = (machine.status, machine.detail.clone(), machine.tmux, machine.claude);
+        machine.status = status;
+        machine.detail = detail;
+        // A failed check says nothing about what is installed there.
+        if status == MachineStatus::Online {
+            machine.tmux = tmux;
+            machine.claude = claude;
+        }
+        before != (machine.status, machine.detail.clone(), machine.tmux, machine.claude)
+    }
+
     pub fn sanitize_after_load(&mut self) {
+        for machine in &mut self.machines {
+            machine.status = MachineStatus::Unknown;
+            machine.detail = None;
+        }
+        let known: std::collections::HashSet<MachineId> = self.machines.iter().map(|m| m.id).collect();
+        self.workspaces.retain(|w| w.machine.is_none_or(|m| known.contains(&m)));
         for ws in &mut self.workspaces {
             ws.tabs.retain(|t| t.layout.is_valid() && t.layout.panes().iter().all(|p| self.panes.contains_key(p)));
             for tab in &mut ws.tabs {
@@ -761,7 +907,7 @@ mod tests {
         s.set_detected(c.pane, Detected::Working, true);
         // A tab pointing at a pane that is not in the map, and a stray pane.
         s.panes.remove(&other.pane);
-        let stray = s.new_pane(claude(), "/x", 3);
+        let stray = s.new_pane(claude(), "/x", None, 3);
         s.panes.insert(stray.id, stray);
         s.next_id = 0;
 

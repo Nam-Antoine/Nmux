@@ -1,10 +1,55 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react'
-import { openCloudUrl } from '../api'
+import { appWindow, openCloudUrl } from '../api'
 import { activeTab, activeWorkspace, leaves, rollup, run, tabLabel, update, useStore } from '../store'
 import { terminals } from '../terminals'
 import type { LayoutNode, Pane, PaneId, Tab, Workspace } from '../types'
-import { Close, FilesIcon, KIND_LABEL, KindIcon, Plus, PortsIcon, SidebarIcon, SplitDown, SplitRight, StateDot, Zoom } from './icons'
+import { Close, FilesIcon, FolderIcon, KIND_LABEL, KindIcon, Monitor, Play, Plus, ServerIcon, PortsIcon, SidebarIcon, SplitDown, SplitRight, StateDot, WinClose, WinMax, WinMin, Zoom } from './icons'
 import { InlineEdit } from './InlineEdit'
+
+export function WindowControls(): React.JSX.Element {
+  return (
+    <div className="win-controls">
+      <button className="win-btn" title="Minimize" onClick={appWindow.minimize}>
+        <WinMin />
+      </button>
+      <button className="win-btn" title="Maximize" onClick={appWindow.toggleMaximize}>
+        <WinMax />
+      </button>
+      <button className="win-btn close" title="Close to the tray. Panes keep running." onClick={appWindow.close}>
+        <WinClose />
+      </button>
+    </div>
+  )
+}
+
+function StatusBar({ ws }: { ws: Workspace }): React.JSX.Element {
+  const s = useStore((x) => x)
+  const agents = s.state.panes.filter((p) => p.kind !== 'shell' && p.status === 'running')
+  const blocked = agents.filter((p) => p.agent === 'blocked').length
+  const machine = s.state.machines.find((m) => m.id === ws.machine)
+  return (
+    <div className="statusbar">
+      <span className="status-item">
+        {machine ? <ServerIcon /> : <Monitor />} {machine ? machine.label : 'This computer'}
+      </span>
+      <span className="status-item path" title={ws.cwd}>
+        <FolderIcon /> <span>{ws.cwd}</span>
+      </span>
+      <span className="status-item">
+        <span className="status-bullet" /> {agents.length} agent{agents.length === 1 ? '' : 's'}
+      </span>
+      {blocked > 0 && (
+        <span className="status-item warn">
+          <span className="status-bullet" /> {blocked} need{blocked === 1 ? 's' : ''} you
+        </span>
+      )}
+      <span className="grow" />
+      <span className="status-hint" onClick={() => update({ dialog: { type: 'help' } })}>
+        Ctrl+B ?&nbsp; shortcuts
+      </span>
+    </div>
+  )
+}
 
 function TabBar({ ws, current }: { ws: Workspace; current: Tab }): React.JSX.Element {
   const s = useStore((x) => x)
@@ -23,12 +68,13 @@ function TabBar({ ws, current }: { ws: Workspace; current: Tab }): React.JSX.Ele
   }
 
   return (
-    <div className="tabbar">
+    <div className="tabbar" data-tauri-drag-region>
       {!s.sidebarOpen && (
         <button className="icon-btn" title="Show sidebar (Ctrl+B, b)" onClick={() => update({ sidebarOpen: true })}>
           <SidebarIcon />
         </button>
       )}
+      <div className="tabs">
       {ws.tabs.map((tab, i) => {
         const ids = leaves(tab.layout)
         const focused = s.panes.get(tab.focused)
@@ -68,6 +114,8 @@ function TabBar({ ws, current }: { ws: Workspace; current: Tab }): React.JSX.Ele
           </div>
         )
       })}
+      </div>
+      <div className="drag" data-tauri-drag-region />
       <div className="tab-add">
         <button className="icon-btn" title="New tab" onClick={() => setMenu(!menu)}>
           <Plus />
@@ -87,33 +135,35 @@ function TabBar({ ws, current }: { ws: Workspace; current: Tab }): React.JSX.Ele
               <button onClick={() => add({ op: 'createTab', workspace: ws.id, pane: { kind: 'shell' } })}>
                 <KindIcon kind="shell" /> Shell
               </button>
-              <button
-                onClick={() => {
-                  setMenu(false)
-                  update({ dialog: { type: 'tab', workspace: ws.id, kind: 'cloud' } })
-                }}
-              >
-                <KindIcon kind="cloud" /> Cloud task…
-              </button>
+              {ws.machine === undefined && (
+                <button
+                  onClick={() => {
+                    setMenu(false)
+                    update({ dialog: { type: 'tab', workspace: ws.id, kind: 'cloud' } })
+                  }}
+                >
+                  <KindIcon kind="cloud" /> Cloud task…
+                </button>
+              )}
             </div>
           </>
         )}
       </div>
-      <span className="grow" />
       <button
-        className={`icon-btn${s.panel === 'files' ? ' on' : ''}`}
+        className={`bar-btn${s.panel === 'files' ? ' on' : ''}`}
         title="Files (Ctrl+B, f)"
         onClick={() => update({ panel: s.panel === 'files' ? null : 'files' })}
       >
-        <FilesIcon />
+        <FilesIcon /> Files
       </button>
       <button
-        className={`icon-btn${s.panel === 'ports' ? ' on' : ''}`}
+        className={`bar-btn${s.panel === 'ports' ? ' on' : ''}`}
         title="Ports and SSH forwards (Ctrl+B, o)"
         onClick={() => update({ panel: s.panel === 'ports' ? null : 'ports' })}
       >
-        <PortsIcon />
+        <PortsIcon /> Ports
       </button>
+      <WindowControls />
     </div>
   )
 }
@@ -173,6 +223,11 @@ function PaneView({ id, focused, solo }: { id: PaneId; focused: boolean; solo: b
     if (focused) terminals.focus(id)
   }, [focused, id, pane?.status])
 
+  const status = pane?.status
+  useEffect(() => {
+    if (status === 'running') terminals.resync(id)
+  }, [status, id])
+
   if (!pane) return null
   const close = (): void => {
     if (pane.status !== 'running' || window.confirm(`Close "${pane.name}"? This stops it.`)) {
@@ -191,10 +246,15 @@ function PaneView({ id, focused, solo }: { id: PaneId; focused: boolean; solo: b
       <div className="pane-head">
         <KindIcon kind={pane.kind} />
         <span className="pane-kind">{KIND_LABEL[pane.kind]}</span>
-        <span className="pane-name">{pane.name}</span>
         <span className="pane-cwd">{pane.cwd}</span>
         {pane.skipPermissions && <span className="badge" title="Runs with --dangerously-skip-permissions">skip-permissions</span>}
-        <StateDot state={pane.agent} exited={pane.status === 'exited'} />
+        {pane.status === 'exited' && !(pane.kind === 'cloud' && pane.cloudSessionId) ? (
+          <button className="btn small-btn resume-btn" onClick={() => void run({ op: 'restartPane', pane: id })}>
+            <Play /> {pane.kind === 'claude' ? 'Resume' : 'Start'}
+          </button>
+        ) : (
+          <StateDot state={pane.agent} exited={pane.status === 'exited'} />
+        )}
         <span className="pane-actions">
           <button className="icon-btn" title="Split right (Ctrl+B, v)" onClick={() => void run({ op: 'splitPane', target: id, dir: 'right', pane: { kind: 'shell' } })}>
             <SplitRight />
@@ -269,6 +329,9 @@ function Empty(): React.JSX.Element {
   const sidebarOpen = useStore((s) => s.sidebarOpen)
   return (
     <div className="empty">
+      <div className="empty-bar" data-tauri-drag-region>
+        <WindowControls />
+      </div>
       {!sidebarOpen && (
         <button className="icon-btn corner" title="Show sidebar" onClick={() => update({ sidebarOpen: true })}>
           <SidebarIcon />
@@ -301,6 +364,7 @@ export function Main(): React.JSX.Element {
           <Tree node={tab.layout} path={[]} tab={tab} />
         )}
       </div>
+      <StatusBar ws={ws} />
     </main>
   )
 }

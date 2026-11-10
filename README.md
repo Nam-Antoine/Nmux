@@ -25,8 +25,8 @@ belong to Nmux, so closing VS Code (or the Nmux window) never kills them.
 
 Nmux is being rewritten in Rust, modelled on [Herdr](https://herdr.dev): a
 workspace per project, tabs inside it, split panes inside a tab, and a state
-for every agent (needs you, working, done, idle). The Electron app below is
-still the installed one until this replaces it.
+for every agent (needs you, working, done, idle). The window follows the
+Herdr desktop app's look. The Electron code below is the previous version.
 
 ```
 crates/nmux-core     model, split layout, agent detection, input validation (no I/O)
@@ -43,6 +43,12 @@ ui/                  React + xterm interface
 - Ports panel: ports your panes listen on (open in the browser), and SSH port
   forwards (`ssh -L`) to other machines.
 - Paste a copied image, or drop files, into a pane: the agent gets the path.
+- Machines: save an SSH target ("Add machine") and open workspaces on it next
+  to the local ones. A remote pane is your own `ssh` in a terminal, so your
+  config, keys and prompts work as usual, and nothing is installed there. With
+  tmux on the machine, panes keep running when the connection drops or Nmux
+  closes; starting the pane again reattaches. Closing a pane ends its tmux
+  session. Files and listening ports are shown for this computer only.
 - Keyboard: `Ctrl+B` then a key (`?` lists them). Everything is on the mouse too.
 
 ```bash

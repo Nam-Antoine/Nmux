@@ -152,6 +152,7 @@ function Preview({ path, onClose }: { path: string; onClose: () => void }): Reac
 }
 
 function Files(): React.JSX.Element {
+  const remote = useStore((s) => activeWorkspace(s)?.machine !== undefined)
   const root = useStore((s) => activeWorkspace(s)?.cwd)
   const [filter, setFilter] = useState('')
   const [version, setVersion] = useState(0)
@@ -160,6 +161,7 @@ function Files(): React.JSX.Element {
   useEffect(() => setSelected(null), [root])
 
   if (!root) return <div className="tree-note">Open a workspace to see its files.</div>
+  if (remote) return <div className="tree-note">This workspace is on another machine. Files are shown for workspaces on this computer.</div>
   return (
     <>
       <div className="panel-tools">
