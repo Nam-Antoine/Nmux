@@ -36,7 +36,7 @@ pub fn state(config_dir: &Path, cwd: &str, session_id: &str) -> Transcript {
     let file = transcript_path(config_dir, cwd, session_id);
     let Some(project) = file.parent() else { return Transcript::Unknown };
     if !project.is_dir() {
-        return Transcript::Unknown;
+        return if config_dir.join("projects").is_dir() { Transcript::Missing } else { Transcript::Unknown };
     }
     match std::fs::metadata(&file) {
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => Transcript::Missing,
@@ -88,6 +88,8 @@ mod tests {
         assert_eq!(state(dir.path(), cwd, "a"), Transcript::Unknown);
 
         let project = dir.path().join("projects").join(encode_project_dir(cwd));
+        std::fs::create_dir_all(dir.path().join("projects")).unwrap();
+        assert_eq!(state(dir.path(), cwd, "a"), Transcript::Missing);
         std::fs::create_dir_all(&project).unwrap();
         assert_eq!(state(dir.path(), cwd, "a"), Transcript::Missing);
 
