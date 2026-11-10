@@ -11,38 +11,40 @@ concurrency:
 
 jobs:
   check:
-    name: Typecheck and build
+    name: Test and build
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v7
 
-      # Version comes from the "packageManager" field in package.json.
       - uses: pnpm/action-setup@v6
+        with:
+          package_json_file: ui/package.json
 
       - uses: actions/setup-node@v7
         with:
           node-version: 22
           cache: pnpm
+          cache-dependency-path: ui/pnpm-lock.yaml
 
-      - name: Install
-        run: pnpm install --frozen-lockfile
+      - uses: Swatinem/rust-cache@v2
 
-      # Electron's binary is downloaded by its postinstall; make sure it is there
-      # (pnpm 10 only runs the scripts allow-listed in package.json).
-      - name: Ensure Electron binary
-        run: node node_modules/electron/install.js
+      - name: Build the interface
+        working-directory: ui
+        run: |
+          pnpm install --frozen-lockfile
+          pnpm build
 
-      - name: Typecheck
-        run: pnpm typecheck
+      - name: Test
+        run: cargo test --workspace
 
       - name: Build
-        run: pnpm build
-
-      - name: Package (unpacked, no installer)
-        run: pnpm exec electron-builder --win --dir --publish never
+        run: cargo build --release --workspace
 
       - uses: actions/upload-artifact@v7
         with:
-          name: nmux-win-unpacked
-          path: release/win-unpacked
+          name: nmux-windows
+          path: |
+            target/release/nmux.exe
+            target/release/nmux-server.exe
+            target/release/nc.exe
           retention-days: 7

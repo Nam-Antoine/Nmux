@@ -5,7 +5,7 @@
     "targets": ["nsis"],
     "publisher": "Nathan Collins",
     "shortDescription": "A desktop home for Claude Code sessions",
-    "resources": { "../target/release/nmux-server.exe": "nmux-server.exe" },
+    "resources": { "../target/release/nmux-server.exe": "nmux-server.exe", "../target/release/nc.exe": "nc.exe" },
     "windows": { "nsis": { "installMode": "currentUser" } }
   }
 }
