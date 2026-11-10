@@ -64,7 +64,6 @@ pub enum Op {
     Attach { pane: PaneId },
     Write { pane: PaneId, data: String },
     SendText { pane: PaneId, text: String },
-    ReadPane { pane: PaneId },
     Resize { pane: PaneId, cols: u16, rows: u16 },
 
     ListDir { path: String },
@@ -121,7 +120,6 @@ pub enum Reply {
     Path { path: String },
     Ports { ports: Vec<ListeningPort> },
     Changes { changes: GitChanges },
-    Text { text: String },
     Diff { diff: String, truncated: bool },
     Forwards { forwards: Vec<Forward> },
 }

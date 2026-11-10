@@ -150,6 +150,20 @@ impl Cli {
         }
     }
 
+    async fn screen(&self, pane: PaneId) -> Result<String, String> {
+        let Reply::Attached { snapshot } = self.call(Op::Attach { pane }).await? else { return fail("unexpected reply") };
+        let mut parser = vt100::Parser::new(snapshot.rows, snapshot.cols, 0);
+        parser.process(snapshot.data.as_bytes());
+        let mut lines: Vec<String> = Vec::new();
+        for row in parser.screen().rows(0, snapshot.cols) {
+            let line = row.trim_end().to_string();
+            if !(line.is_empty() && lines.last().is_none_or(|l| l.is_empty())) {
+                lines.push(line);
+            }
+        }
+        Ok(lines.join("\n").trim().to_string())
+    }
+
     fn pane(&self, id: PaneId) -> Result<&Pane, String> {
         self.state.panes.get(&id).ok_or_else(|| "that pane was closed".to_string())
     }
@@ -225,8 +239,7 @@ impl Cli {
             let p = self.pane(pane)?;
             let state = pane_state(p);
             if let Some(wanted) = output {
-                let Reply::Text { text } = self.call(Op::ReadPane { pane }).await? else { return fail("unexpected reply") };
-                if text.contains(wanted) || p.status == PaneStatus::Exited {
+                if p.status == PaneStatus::Exited || self.screen(pane).await?.contains(wanted) {
                     return Ok(state);
                 }
             } else {
@@ -277,8 +290,7 @@ impl Cli {
             return Ok(());
         }
         let state = self.wait(pane, args).await?;
-        let Reply::Text { text } = self.call(Op::ReadPane { pane }).await? else { return fail("unexpected reply") };
-        println!("{}\n\n{address} is {state}", text.trim_end());
+        println!("{}\n\n{address} is {state}", self.screen(pane).await?);
         Ok(())
     }
 }
@@ -336,8 +348,7 @@ async fn run(mut raw: Vec<String>) -> Result<(), String> {
         }
         "read" => {
             let pane = cli.named_or_me(first)?;
-            let Reply::Text { text } = cli.call(Op::ReadPane { pane }).await? else { return fail("unexpected reply") };
-            println!("{}", text.trim_end());
+            println!("{}", cli.screen(pane).await?);
         }
         "kill" => {
             let pane = cli.named(first)?;

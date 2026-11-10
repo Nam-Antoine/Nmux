@@ -114,7 +114,6 @@ export type Op =
   | { op: 'listMachinePorts'; machine: MachineId }
   | { op: 'stopPane'; pane: PaneId }
   | { op: 'sendText'; pane: PaneId; text: string }
-  | { op: 'readPane'; pane: PaneId }
   | { op: 'gitChanges'; workspace: WorkspaceId }
   | { op: 'gitDiff'; workspace: WorkspaceId; path: string; untracked: boolean }
   | { op: 'listForwards' }
@@ -191,7 +190,6 @@ export type Reply =
   | { kind: 'path'; path: string }
   | { kind: 'ports'; ports: ListeningPort[] }
   | { kind: 'changes'; changes: GitChanges }
-  | { kind: 'text'; text: string }
   | { kind: 'diff'; diff: string; truncated: boolean }
   | { kind: 'forwards'; forwards: Forward[] }
 

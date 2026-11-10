@@ -432,10 +432,6 @@ impl Hub {
                 }
                 Ok(Reply::Done)
             }
-            Op::ReadPane { pane } => {
-                let rt = inner.runtimes.get(&pane).ok_or("that pane has not run yet")?;
-                Ok(Reply::Text { text: rt.screen.text() })
-            }
             Op::Resize { pane, cols, rows } => {
                 if !(2..=1000).contains(&cols) || !(1..=1000).contains(&rows) {
                     return Err("bad terminal size".into());
