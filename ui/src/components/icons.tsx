@@ -35,6 +35,9 @@ export const PortsIcon = () => (
 export const BranchIcon = () => (
   <svg {...base}><circle cx="4.5" cy="3.8" r="1.5" /><circle cx="4.5" cy="12.2" r="1.5" /><circle cx="11.5" cy="5.8" r="1.5" /><path d="M4.5 5.3v5.4M11.5 7.3c0 2.4-3.2 2.2-7 3.4" /></svg>
 )
+export const Pencil = () => (
+  <svg {...base}><path d="M10.8 2.8l2.4 2.4L6 12.4l-3 .6.6-3z" /></svg>
+)
 export const FolderIcon = () => (
   <svg {...base}><path d="M2.5 5a1.5 1.5 0 011.5-1.5h2.2l1.3 1.5H12A1.5 1.5 0 0113.5 6.5v4.5A1.5 1.5 0 0112 12.5H4A1.5 1.5 0 012.5 11z" /></svg>
 )

@@ -31,7 +31,7 @@ Herdr desktop app's look. The Electron code below is the previous version.
 ```
 crates/nmux-core     model, split layout, agent detection, input validation (no I/O)
 crates/nmux-proto    messages between server and clients
-crates/nmux-server   background server that owns the terminals; nmux-ctl client
+crates/nmux-server   background server that owns the terminals; nmx command-line client
 src-tauri/           the window: a thin Tauri shell over the server
 ui/                  React + xterm interface
 ```

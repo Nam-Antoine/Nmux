@@ -59,6 +59,7 @@ export interface Workspace {
   tabs: Tab[]
   activeTab: TabId
   machine?: MachineId
+  number: number
 }
 
 export interface State {
@@ -111,6 +112,8 @@ export type Op =
   | { op: 'pasteImage'; pane: PaneId; extension: string; data: string }
   | { op: 'listPorts' }
   | { op: 'listMachinePorts'; machine: MachineId }
+  | { op: 'sendText'; pane: PaneId; text: string }
+  | { op: 'readPane'; pane: PaneId }
   | { op: 'gitChanges'; workspace: WorkspaceId }
   | { op: 'gitDiff'; workspace: WorkspaceId; path: string; untracked: boolean }
   | { op: 'listForwards' }
@@ -187,6 +190,7 @@ export type Reply =
   | { kind: 'path'; path: string }
   | { kind: 'ports'; ports: ListeningPort[] }
   | { kind: 'changes'; changes: GitChanges }
+  | { kind: 'text'; text: string }
   | { kind: 'diff'; diff: string; truncated: boolean }
   | { kind: 'forwards'; forwards: Forward[] }
 

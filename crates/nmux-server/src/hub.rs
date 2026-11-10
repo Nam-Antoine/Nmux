@@ -415,6 +415,20 @@ impl Hub {
                 }
                 Ok(Reply::Done)
             }
+            Op::SendText { pane, text } => {
+                let rt = inner.runtimes.get(&pane).ok_or("no such pane")?;
+                let process = rt.process.as_ref().ok_or("that pane is not running; resume it first")?;
+                if rt.screen.bracketed_paste() {
+                    process.write(format!("\x1b[200~{text}\x1b[201~").as_bytes());
+                } else {
+                    process.write(text.as_bytes());
+                }
+                Ok(Reply::Done)
+            }
+            Op::ReadPane { pane } => {
+                let rt = inner.runtimes.get(&pane).ok_or("that pane has not run yet")?;
+                Ok(Reply::Text { text: rt.screen.text() })
+            }
             Op::Resize { pane, cols, rows } => {
                 if !(2..=1000).contains(&cols) || !(1..=1000).contains(&rows) {
                     return Err("bad terminal size".into());
@@ -579,7 +593,8 @@ impl Hub {
 
     fn spawn(self: &Arc<Self>, inner: &mut Inner, id: PaneId, start: Start) {
         let Some(pane) = inner.state.panes.get(&id) else { return };
-        let env = launch::pane_env(&self.config.env, id);
+        let mut env = launch::pane_env(&self.config.env, id);
+        env.insert("NMUX_DATA_DIR".into(), self.config.data_dir.to_string_lossy().into_owned());
         let far = pane.machine.map(|m| inner.state.machine(m).map(|m| m.target.clone()));
         let command = match (&far, pane.kind) {
             (Some(target), kind) => {

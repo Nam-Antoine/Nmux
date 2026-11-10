@@ -165,6 +165,15 @@ export function workspacePanes(ws: Workspace): PaneId[] {
   return ws.tabs.flatMap((t) => leaves(t.layout))
 }
 
+export function paneAddress(s: Store, pane: PaneId): string | undefined {
+  for (const ws of s.state.workspaces) {
+    const panes = workspacePanes(ws)
+    const index = panes.indexOf(pane)
+    if (index >= 0) return panes.length === 1 ? `n${ws.number}` : `n${ws.number}.${index + 1}`
+  }
+  return undefined
+}
+
 export function tabLabel(s: Store, tab: Tab, index: number): string {
   return tab.name ?? s.panes.get(tab.focused)?.name ?? String(index + 1)
 }

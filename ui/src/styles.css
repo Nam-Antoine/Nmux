@@ -354,19 +354,6 @@ kbd {
   background: var(--tab);
   opacity: 1;
 }
-.row-actions {
-  display: none;
-  gap: 2px;
-}
-.space-row:hover .row-actions {
-  display: flex;
-}
-.space-row:hover .space-sub {
-  display: none;
-}
-.space-row:hover .space-name {
-  flex: 1 1 0;
-}
 
 .avatar {
   width: 17.5px;
@@ -837,6 +824,15 @@ textarea {
 .menu button:hover {
   background: var(--active);
 }
+.menu.context {
+  position: fixed;
+  right: auto;
+  min-width: 190px;
+  transform-origin: top left;
+}
+.menu button.danger {
+  color: var(--danger);
+}
 
 .tab-body {
   flex: 1;
@@ -898,6 +894,14 @@ textarea {
 }
 .pane.focused {
   border-color: var(--focus);
+}
+.pane-address {
+  flex: none;
+  font: 11px var(--font-mono);
+  color: var(--muted);
+  border: 1px solid var(--pane-line);
+  border-radius: 5px;
+  padding: 0 5px;
 }
 .pane-head {
   display: flex;

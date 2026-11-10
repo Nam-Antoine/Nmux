@@ -129,6 +129,14 @@ pub fn pane_env(base: &Env, pane: PaneId) -> Env {
     env.insert("COLORTERM".into(), "truecolor".into());
     env.insert("TERM_PROGRAM".into(), "nmux".into());
     env.insert("NMUX_PANE_ID".into(), pane.0.to_string());
+    if let Some(dir) = std::env::current_exe().ok().and_then(|exe| Some(exe.parent()?.to_string_lossy().into_owned())) {
+        let key = env.keys().find(|k| k.eq_ignore_ascii_case("PATH")).cloned().unwrap_or_else(|| "PATH".into());
+        let sep = if cfg!(windows) { ';' } else { ':' };
+        let path = env.entry(key).or_default();
+        if !path.split(sep).any(|p| p == dir) {
+            *path = if path.is_empty() { dir } else { format!("{dir}{sep}{path}") };
+        }
+    }
     env
 }
 

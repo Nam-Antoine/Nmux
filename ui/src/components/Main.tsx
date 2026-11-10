@@ -1,6 +1,6 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { appWindow, openCloudUrl } from '../api'
-import { activeTab, activeWorkspace, leaves, rollup, run, tabLabel, togglePanel, update, useStore } from '../store'
+import { activeTab, activeWorkspace, leaves, paneAddress, rollup, run, tabLabel, togglePanel, update, useStore } from '../store'
 import { terminals } from '../terminals'
 import type { LayoutNode, Pane, PaneId, Tab, Workspace } from '../types'
 import { BranchIcon, Close, FilesIcon, FolderIcon, KIND_LABEL, KindIcon, Monitor, Play, Plus, ServerIcon, PortsIcon, SidebarIcon, SplitDown, SplitRight, StateDot, WinClose, WinMax, WinMin, Zoom } from './icons'
@@ -206,6 +206,7 @@ function ExitedOverlay({ pane }: { pane: Pane }): React.JSX.Element {
 function PaneView({ id, focused, solo }: { id: PaneId; focused: boolean; solo: boolean }): React.JSX.Element | null {
   const pane = useStore((s) => s.panes.get(id))
   const zoomed = useStore((s) => activeTab(s)?.zoomed ?? false)
+  const address = useStore((s) => paneAddress(s, id))
   const hostRef = useRef<HTMLDivElement>(null)
 
   useLayoutEffect(() => {
@@ -243,6 +244,11 @@ function PaneView({ id, focused, solo }: { id: PaneId; focused: boolean; solo: b
         <KindIcon kind={pane.kind} />
         <span className="pane-kind">{KIND_LABEL[pane.kind]}</span>
         <span className="pane-cwd">{pane.cwd}</span>
+        {address && (
+          <span className="pane-address" title={`Other panes reach this one with: nmx send ${address} "…"`}>
+            {address}
+          </span>
+        )}
         {pane.skipPermissions && <span className="badge" title="Runs with --dangerously-skip-permissions">skip-permissions</span>}
         {pane.status === 'exited' && !(pane.kind === 'cloud' && pane.cloudSessionId) ? (
           <button className="btn small-btn resume-btn" onClick={() => void run({ op: 'restartPane', pane: id })}>

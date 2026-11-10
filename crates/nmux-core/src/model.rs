@@ -173,6 +173,18 @@ pub struct Workspace {
     pub active_tab: TabId,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub machine: Option<MachineId>,
+    #[serde(default)]
+    pub number: u32,
+}
+
+impl Workspace {
+    pub fn panes(&self) -> Vec<PaneId> {
+        self.tabs.iter().flat_map(|t| t.layout.panes()).collect()
+    }
+
+    pub fn focused_pane(&self) -> Option<PaneId> {
+        self.tabs.iter().find(|t| t.id == self.active_tab).or(self.tabs.first()).map(|t| t.focused)
+    }
 }
 
 #[derive(Clone, PartialEq, Debug, Default, Serialize, Deserialize)]
@@ -328,7 +340,9 @@ impl State {
         let tab = TabId(self.fresh_id());
         let workspace = WorkspaceId(self.fresh_id());
         let name = name.filter(|n| !n.trim().is_empty()).unwrap_or_else(|| folder_name(&cwd));
+        let number = self.free_number();
         self.workspaces.push(Workspace {
+            number,
             id: workspace,
             name,
             cwd,
@@ -640,7 +654,50 @@ impl State {
         before != (machine.status, machine.detail.clone(), machine.tmux, machine.claude)
     }
 
+    fn free_number(&self) -> u32 {
+        (1..).find(|n| self.workspaces.iter().all(|w| w.number != *n)).unwrap_or(1)
+    }
+
+    pub fn address(&self, pane: PaneId) -> Option<String> {
+        self.workspaces.iter().find_map(|w| {
+            let panes = w.panes();
+            let index = panes.iter().position(|p| *p == pane)?;
+            Some(if panes.len() == 1 { format!("n{}", w.number) } else { format!("n{}.{}", w.number, index + 1) })
+        })
+    }
+
+    pub fn resolve(&self, address: &str) -> Result<PaneId, String> {
+        let text = address.trim();
+        let numbered = text.strip_prefix(['n', 'N']).and_then(|rest| {
+            let (number, index) = rest.split_once('.').map_or((rest, None), |(n, i)| (n, Some(i)));
+            Some((number.parse::<u32>().ok()?, index.map(|i| i.parse::<usize>())))
+        });
+        if let Some((number, index)) = numbered {
+            let ws = self.workspaces.iter().find(|w| w.number == number).ok_or(format!("there is no workspace n{number}"))?;
+            return match index {
+                None => ws.focused_pane().ok_or_else(|| "that workspace has no pane".to_string()),
+                Some(Ok(i)) if i >= 1 => ws.panes().get(i - 1).copied().ok_or(format!("n{number} has no pane {i}")),
+                Some(_) => Err(format!("\"{text}\" is not an address; use n{number} or n{number}.2")),
+            };
+        }
+        let lower = text.to_lowercase();
+        let exact: Vec<&Workspace> = self.workspaces.iter().filter(|w| w.name.to_lowercase() == lower).collect();
+        let found = if exact.is_empty() { self.workspaces.iter().filter(|w| w.name.to_lowercase().starts_with(&lower)).collect() } else { exact };
+        match found.as_slice() {
+            [ws] => ws.focused_pane().ok_or_else(|| "that workspace has no pane".to_string()),
+            [] => Err(format!("nothing is called \"{text}\"; run: nmx ls")),
+            _ => Err(format!("more than one workspace matches \"{text}\"; use its n-number")),
+        }
+    }
+
     pub fn sanitize_after_load(&mut self) {
+        for i in 0..self.workspaces.len() {
+            let number = self.workspaces[i].number;
+            if number == 0 || self.workspaces[..i].iter().any(|w| w.number == number) {
+                self.workspaces[i].number = 0;
+                self.workspaces[i].number = self.free_number();
+            }
+        }
         for machine in &mut self.machines {
             machine.status = MachineStatus::Unknown;
             machine.detail = None;
@@ -723,6 +780,33 @@ mod tests {
         assert_eq!(s.panes[&c.pane].cwd, "C:\\work\\Nmux");
         assert_eq!(s.active_workspace, Some(c.workspace));
         assert_eq!(folder_name("/home/me/app/"), "app");
+    }
+
+    #[test]
+    fn panes_are_reached_by_workspace_number_or_name() {
+        let (mut s, a) = state();
+        let b = s.create_workspace(Some("TL education".into()), "/work/tl".into(), claude(), 2);
+        let split = s.split_pane(b.pane, Dir::Right, PaneSpec::new(PaneKind::Shell), 3).unwrap();
+        assert_eq!(s.address(a.pane).as_deref(), Some("n1"));
+        assert_eq!(s.address(b.pane).as_deref(), Some("n2.1"));
+        assert_eq!(s.address(split.pane).as_deref(), Some("n2.2"));
+        assert_eq!(s.resolve("n1"), Ok(a.pane));
+        assert_eq!(s.resolve("N2.1"), Ok(b.pane));
+        assert_eq!(s.resolve("n2"), Ok(split.pane));
+        assert_eq!(s.resolve("tl edu"), Ok(split.pane));
+        assert_eq!(s.resolve("nmux"), Ok(a.pane));
+        assert!(s.resolve("n9").is_err() && s.resolve("n2.5").is_err() && s.resolve("n2.x").is_err() && s.resolve("nothing").is_err());
+
+        s.close_workspace(a.workspace).unwrap();
+        assert_eq!(s.address(b.pane).as_deref(), Some("n2.1"));
+        let c = s.create_workspace(None, "/work/new".into(), claude(), 4);
+        assert_eq!(s.address(c.pane).as_deref(), Some("n1"));
+
+        for w in &mut s.workspaces {
+            w.number = 0;
+        }
+        s.sanitize_after_load();
+        assert_eq!(s.workspaces.iter().map(|w| w.number).collect::<Vec<_>>(), vec![1, 2]);
     }
 
     #[test]

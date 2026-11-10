@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { rollup, run, update, useStore, workspacePanes } from '../store'
 import type { AgentState, Machine, Pane, Workspace } from '../types'
-import { Avatar, Chevron, Clock, Close, FilesIcon, Keyboard, PortsIcon, KindIcon, Monitor, Play, Plus, Search, ServerIcon, SidebarIcon, StateDot } from './icons'
+import { Avatar, Chevron, Clock, Close, FilesIcon, Keyboard, Pencil, PortsIcon, KindIcon, Monitor, Play, Plus, Search, ServerIcon, SidebarIcon, StateDot } from './icons'
 import { InlineEdit } from './InlineEdit'
 
 function tail(path: string): string {
@@ -12,6 +12,7 @@ function tail(path: string): string {
 function WorkspaceRow({ ws, active }: { ws: Workspace; active: boolean }): React.JSX.Element {
   const s = useStore((x) => x)
   const [renaming, setRenaming] = useState(false)
+  const [menu, setMenu] = useState<{ x: number; y: number } | null>(null)
   const ids = workspacePanes(ws)
   const running = ids.filter((id) => s.panes.get(id)?.status === 'running').length
   const state = rollup(s, ids)
@@ -35,8 +36,41 @@ function WorkspaceRow({ ws, active }: { ws: Workspace; active: boolean }): React
       className={`space-row${active ? ' active' : ''}`}
       onClick={() => void run({ op: 'selectWorkspace', workspace: ws.id })}
       onDoubleClick={() => setRenaming(true)}
-      title={ws.cwd}
+      onContextMenu={(e) => {
+        e.preventDefault()
+        setMenu({ x: e.clientX, y: e.clientY })
+      }}
+      title={`n${ws.number} · ${ws.cwd}`}
     >
+      {menu && (
+        <div
+          onClick={(e) => {
+            e.stopPropagation()
+            setMenu(null)
+          }}
+          onContextMenu={(e) => {
+            e.preventDefault()
+            e.stopPropagation()
+            setMenu(null)
+          }}
+        >
+          <div className="menu-backdrop" />
+          <div className="menu context" style={{ left: menu.x, top: Math.min(menu.y, window.innerHeight - 150) }}>
+            <button onClick={() => void run({ op: 'createTab', workspace: ws.id, pane: { kind: 'claude' } })}>
+              <KindIcon kind="claude" /> New Claude tab
+            </button>
+            <button onClick={() => void run({ op: 'createTab', workspace: ws.id, pane: { kind: 'shell' } })}>
+              <KindIcon kind="shell" /> New shell tab
+            </button>
+            <button onClick={() => setRenaming(true)}>
+              <Pencil /> Rename
+            </button>
+            <button className="danger" onClick={close}>
+              <Close /> Close workspace
+            </button>
+          </div>
+        </div>
+      )}
       <Avatar name={ws.name} />
       {renaming ? (
         <InlineEdit
@@ -52,28 +86,6 @@ function WorkspaceRow({ ws, active }: { ws: Workspace; active: boolean }): React
           <span className="space-sub">{tail(ws.cwd)}</span>
         </>
       )}
-      <span className="row-actions">
-        <button
-          className="icon-btn"
-          title="New Claude tab in this workspace"
-          onClick={(e) => {
-            e.stopPropagation()
-            void run({ op: 'createTab', workspace: ws.id, pane: { kind: 'claude' } })
-          }}
-        >
-          <Plus />
-        </button>
-        <button
-          className="icon-btn"
-          title="Close workspace"
-          onClick={(e) => {
-            e.stopPropagation()
-            close()
-          }}
-        >
-          <Close />
-        </button>
-      </span>
       <span className="space-tools">
         <button className={`icon-btn${active && s.panel === 'files' ? ' on' : ''}`} title={`Files in ${ws.name}`} onClick={panel('files')}>
           <FilesIcon />
