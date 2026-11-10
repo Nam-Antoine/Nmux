@@ -41,6 +41,7 @@ pub enum Op {
     SplitPane { target: PaneId, dir: Dir, pane: PaneSpec },
 
     ClosePane { pane: PaneId },
+    StopPane { pane: PaneId },
     CloseTab { tab: TabId },
     CloseWorkspace { workspace: WorkspaceId },
 

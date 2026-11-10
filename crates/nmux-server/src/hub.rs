@@ -329,6 +329,13 @@ impl Hub {
                 let closed = inner.state.close_pane(pane).map_err(e)?;
                 Ok(self.closed(inner, closed, far, graveyard))
             }
+            Op::StopPane { pane } => {
+                let rt = inner.runtimes.get_mut(&pane).ok_or("that pane is not running")?;
+                graveyard.extend(rt.process.take());
+                inner.state.set_exited(pane, None);
+                self.changed(inner);
+                Ok(Reply::Done)
+            }
             Op::CloseTab { tab } => {
                 let far = remote_sessions(&inner.state, &remote::owner(&self.config.env));
                 let closed = inner.state.close_tab(tab).map_err(e)?;

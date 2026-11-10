@@ -112,6 +112,7 @@ export type Op =
   | { op: 'pasteImage'; pane: PaneId; extension: string; data: string }
   | { op: 'listPorts' }
   | { op: 'listMachinePorts'; machine: MachineId }
+  | { op: 'stopPane'; pane: PaneId }
   | { op: 'sendText'; pane: PaneId; text: string }
   | { op: 'readPane'; pane: PaneId }
   | { op: 'gitChanges'; workspace: WorkspaceId }

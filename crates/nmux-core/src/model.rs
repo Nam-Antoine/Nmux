@@ -660,32 +660,29 @@ impl State {
 
     pub fn address(&self, pane: PaneId) -> Option<String> {
         self.workspaces.iter().find_map(|w| {
-            let panes = w.panes();
-            let index = panes.iter().position(|p| *p == pane)?;
-            Some(if panes.len() == 1 { format!("n{}", w.number) } else { format!("n{}.{}", w.number, index + 1) })
+            let index = w.panes().iter().position(|p| *p == pane)?;
+            let letter = if index == 0 { String::new() } else { ((b'a' + index.min(25) as u8) as char).to_string() };
+            Some(format!("n{}{letter}", w.number))
         })
     }
 
     pub fn resolve(&self, address: &str) -> Result<PaneId, String> {
         let text = address.trim();
-        let numbered = text.strip_prefix(['n', 'N']).and_then(|rest| {
-            let (number, index) = rest.split_once('.').map_or((rest, None), |(n, i)| (n, Some(i)));
-            Some((number.parse::<u32>().ok()?, index.map(|i| i.parse::<usize>())))
+        let lower = text.to_lowercase();
+        let numbered = lower.strip_prefix('n').and_then(|rest| {
+            let digits = rest.trim_end_matches(|c: char| c.is_ascii_lowercase());
+            let letter = &rest[digits.len()..];
+            (letter.len() <= 1).then_some((digits.parse::<u32>().ok()?, letter.bytes().next().map_or(0, |l| (l - b'a') as usize)))
         });
         if let Some((number, index)) = numbered {
             let ws = self.workspaces.iter().find(|w| w.number == number).ok_or(format!("there is no workspace n{number}"))?;
-            return match index {
-                None => ws.focused_pane().ok_or_else(|| "that workspace has no pane".to_string()),
-                Some(Ok(i)) if i >= 1 => ws.panes().get(i - 1).copied().ok_or(format!("n{number} has no pane {i}")),
-                Some(_) => Err(format!("\"{text}\" is not an address; use n{number} or n{number}.2")),
-            };
+            return ws.panes().get(index).copied().ok_or(format!("n{number} has no pane \"{text}\""));
         }
-        let lower = text.to_lowercase();
         let exact: Vec<&Workspace> = self.workspaces.iter().filter(|w| w.name.to_lowercase() == lower).collect();
         let found = if exact.is_empty() { self.workspaces.iter().filter(|w| w.name.to_lowercase().starts_with(&lower)).collect() } else { exact };
         match found.as_slice() {
             [ws] => ws.focused_pane().ok_or_else(|| "that workspace has no pane".to_string()),
-            [] => Err(format!("nothing is called \"{text}\"; run: nmx ls")),
+            [] => Err(format!("nothing is called \"{text}\"; run: nc ls --all")),
             _ => Err(format!("more than one workspace matches \"{text}\"; use its n-number")),
         }
     }
@@ -788,17 +785,18 @@ mod tests {
         let b = s.create_workspace(Some("TL education".into()), "/work/tl".into(), claude(), 2);
         let split = s.split_pane(b.pane, Dir::Right, PaneSpec::new(PaneKind::Shell), 3).unwrap();
         assert_eq!(s.address(a.pane).as_deref(), Some("n1"));
-        assert_eq!(s.address(b.pane).as_deref(), Some("n2.1"));
-        assert_eq!(s.address(split.pane).as_deref(), Some("n2.2"));
+        assert_eq!(s.address(b.pane).as_deref(), Some("n2"));
+        assert_eq!(s.address(split.pane).as_deref(), Some("n2b"));
         assert_eq!(s.resolve("n1"), Ok(a.pane));
-        assert_eq!(s.resolve("N2.1"), Ok(b.pane));
-        assert_eq!(s.resolve("n2"), Ok(split.pane));
+        assert_eq!(s.resolve("N2"), Ok(b.pane));
+        assert_eq!(s.resolve("n2a"), Ok(b.pane));
+        assert_eq!(s.resolve("n2b"), Ok(split.pane));
         assert_eq!(s.resolve("tl edu"), Ok(split.pane));
         assert_eq!(s.resolve("nmux"), Ok(a.pane));
-        assert!(s.resolve("n9").is_err() && s.resolve("n2.5").is_err() && s.resolve("n2.x").is_err() && s.resolve("nothing").is_err());
+        assert!(s.resolve("n9").is_err() && s.resolve("n2e").is_err() && s.resolve("n2.2").is_err() && s.resolve("nothing").is_err());
 
         s.close_workspace(a.workspace).unwrap();
-        assert_eq!(s.address(b.pane).as_deref(), Some("n2.1"));
+        assert_eq!(s.address(b.pane).as_deref(), Some("n2"));
         let c = s.create_workspace(None, "/work/new".into(), claude(), 4);
         assert_eq!(s.address(c.pane).as_deref(), Some("n1"));
 

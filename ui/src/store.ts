@@ -169,7 +169,7 @@ export function paneAddress(s: Store, pane: PaneId): string | undefined {
   for (const ws of s.state.workspaces) {
     const panes = workspacePanes(ws)
     const index = panes.indexOf(pane)
-    if (index >= 0) return panes.length === 1 ? `n${ws.number}` : `n${ws.number}.${index + 1}`
+    if (index >= 0) return `n${ws.number}${index === 0 ? '' : String.fromCharCode(97 + Math.min(index, 25))}`
   }
   return undefined
 }

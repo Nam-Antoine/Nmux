@@ -245,7 +245,7 @@ function PaneView({ id, focused, solo }: { id: PaneId; focused: boolean; solo: b
         <span className="pane-kind">{KIND_LABEL[pane.kind]}</span>
         <span className="pane-cwd">{pane.cwd}</span>
         {address && (
-          <span className="pane-address" title={`Other panes reach this one with: nmx send ${address} "…"`}>
+          <span className="pane-address" title={`Other panes reach this one with: nc send ${address} "…"`}>
             {address}
           </span>
         )}
