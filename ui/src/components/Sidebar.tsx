@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { rollup, run, update, useStore, workspacePanes } from '../store'
 import type { AgentState, Machine, Pane, Workspace } from '../types'
-import { Avatar, Chevron, Clock, Close, Keyboard, KindIcon, Monitor, Play, Plus, Search, ServerIcon, SidebarIcon, StateDot } from './icons'
+import { Avatar, Chevron, Clock, Close, FilesIcon, Keyboard, PortsIcon, KindIcon, Monitor, Play, Plus, Search, ServerIcon, SidebarIcon, StateDot } from './icons'
 import { InlineEdit } from './InlineEdit'
 
 function tail(path: string): string {
@@ -15,6 +15,15 @@ function WorkspaceRow({ ws, active }: { ws: Workspace; active: boolean }): React
   const ids = workspacePanes(ws)
   const running = ids.filter((id) => s.panes.get(id)?.status === 'running').length
   const state = rollup(s, ids)
+
+  const remote = ws.machine !== undefined
+  const forwards = remote ? s.forwards.filter((f) => f.host === s.state.machines.find((m) => m.id === ws.machine)?.target && f.state === 'active').length : 0
+  const panel = (which: 'files' | 'ports') => (e: React.MouseEvent): void => {
+    e.stopPropagation()
+    if (active && s.panel === which) return update({ panel: null })
+    if (!active) void run({ op: 'selectWorkspace', workspace: ws.id })
+    update({ panel: which })
+  }
 
   const close = (): void => {
     const warn = running > 0 ? `Close "${ws.name}"? This stops ${running} running pane${running > 1 ? 's' : ''}.` : `Close "${ws.name}"?`
@@ -65,6 +74,18 @@ function WorkspaceRow({ ws, active }: { ws: Workspace; active: boolean }): React
           <Close />
         </button>
       </span>
+      <span className="space-tools">
+        <button className={`icon-btn${active && s.panel === 'files' ? ' on' : ''}`} title={`Files in ${ws.name}`} onClick={panel('files')}>
+          <FilesIcon />
+        </button>
+        <button
+          className={`icon-btn${active && s.panel === 'ports' ? ' on' : ''}${forwards > 0 ? ' live' : ''}`}
+          title={remote ? `Ports and forwards on this machine${forwards > 0 ? ` (${forwards} forwarded)` : ''}` : `Ports opened by ${ws.name}`}
+          onClick={panel('ports')}
+        >
+          <PortsIcon />
+        </button>
+      </span>
       {running > 0 ? (
         <StateDot state={state === 'unknown' ? 'idle' : state} />
       ) : (
@@ -93,7 +114,6 @@ const MACHINE_TITLE: Record<Machine['status'], string> = {
   error: 'Cannot connect. Click to try again.'
 }
 
-/** One computer and its workspaces: this one, or a saved SSH machine. */
 function MachineGroup({ machine, spaces, activeId, running }: { machine?: Machine; spaces: Workspace[]; activeId?: number; running: boolean }): React.JSX.Element {
   const [open, setOpen] = useState(true)
   const [renaming, setRenaming] = useState(false)
@@ -178,7 +198,6 @@ const GROUPS: Array<{ key: string; label: string; match: (p: Pane) => boolean }>
   { key: 'stopped', label: 'Not running', match: (p) => p.status === 'exited' }
 ]
 
-/** How long ago, in the shortest form: 5m, 2h, 4d. */
 function age(since: number): string {
   const minutes = Math.max(0, Math.floor((Date.now() - since) / 60000))
   if (minutes < 1) return 'now'
@@ -223,12 +242,10 @@ function AgentRow({ pane, where, focused }: { pane: Pane; where: string; focused
 function Agents({ filter }: { filter: string }): React.JSX.Element {
   const s = useStore((x) => x)
   const [collapsed, setCollapsed] = useState<Record<string, boolean>>({})
-  // Stopped agents are listed, so each one can be resumed from here.
   const [history, setHistory] = useState(true)
   const where = new Map<number, string>()
   let focused: number | undefined
   for (const ws of s.state.workspaces) {
-    // Like Herdr: an agent on another machine is placed by its machine.
     const label = s.state.machines.find((m) => m.id === ws.machine)?.label ?? ws.name
     for (const id of workspacePanes(ws)) where.set(id, label)
     if (ws.id === s.state.activeWorkspace) focused = ws.tabs.find((t) => t.id === ws.activeTab)?.focused

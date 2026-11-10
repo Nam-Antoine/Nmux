@@ -1,10 +1,3 @@
-//! Workspaces, tabs and panes.
-//!
-//! A workspace is a project folder. It owns tabs; a tab is a split layout of
-//! panes; a pane is one real terminal (Claude, a shell, or a cloud launcher).
-//! This module only holds the structure and the rules for changing it. The
-//! server owns the processes and calls in here; nothing here does I/O.
-
 use std::collections::BTreeMap;
 
 use serde::{Deserialize, Serialize};
@@ -19,7 +12,6 @@ pub struct WorkspaceId(pub u32);
 #[serde(transparent)]
 pub struct MachineId(pub u32);
 
-/// What the last connection check of a machine found. Never trusted from disk.
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub enum MachineStatus {
@@ -27,26 +19,20 @@ pub enum MachineStatus {
     Unknown,
     Checking,
     Online,
-    /// Reachable, but it wants a password or a key Nmux cannot give unattended.
     Auth,
     Error,
 }
 
-/// Another computer, reached with the user's own `ssh`. Nmux keeps the
-/// target and a label; keys and passwords stay with OpenSSH.
 #[derive(Clone, PartialEq, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Machine {
     pub id: MachineId,
     pub label: String,
-    /// What goes after `ssh`: a config alias, `user@host`, or `ssh://user@host:port`.
     pub target: String,
     #[serde(default)]
     pub status: MachineStatus,
-    /// Why it is not online, in ssh's words.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub detail: Option<String>,
-    /// tmux is there, so panes outlive a dropped connection.
     #[serde(default)]
     pub tmux: bool,
     #[serde(default)]
@@ -62,7 +48,6 @@ pub struct TabId(pub u32);
 pub enum PaneKind {
     Claude,
     Shell,
-    /// Runs `claude --cloud "<task>"`, which creates a cloud session and exits.
     Cloud,
 }
 
@@ -73,25 +58,18 @@ pub enum PaneStatus {
     Exited,
 }
 
-/// What the agent in a pane is doing, as far as Nmux can tell.
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Default, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum AgentState {
-    /// Needs input, approval or a decision.
     Blocked,
-    /// Mid-turn.
     Working,
-    /// Finished, and nobody has looked at it yet.
     Done,
-    /// Ready for input and already seen.
     Idle,
-    /// Not an agent, or cannot be classified.
     #[default]
     Unknown,
 }
 
 impl AgentState {
-    /// Higher wins when the states of several panes roll up to a tab or workspace.
     pub fn rank(self) -> u8 {
         match self {
             AgentState::Blocked => 4,
@@ -103,7 +81,6 @@ impl AgentState {
     }
 }
 
-/// What the detector read off the terminal, before "has the user seen it" is applied.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Detected {
     Blocked,
@@ -123,7 +100,6 @@ pub struct Pane {
     pub exit_code: Option<i32>,
     #[serde(default)]
     pub agent: AgentState,
-    /// Nmux chooses Claude's session id so the conversation can be resumed.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub claude_session_id: Option<String>,
     #[serde(default)]
@@ -136,24 +112,19 @@ pub struct Pane {
     pub cloud_session_id: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub cloud_url: Option<String>,
-    /// Cloud session this Claude pane was teleported from.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub teleported_from: Option<String>,
-    /// Runs on this machine over ssh; `None` is this computer.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub machine: Option<MachineId>,
-    /// Milliseconds since the Unix epoch.
     pub created_at: u64,
 }
 
-/// What a caller supplies to create a pane; everything else is filled in.
 #[derive(Clone, PartialEq, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PaneSpec {
     pub kind: PaneKind,
     #[serde(default)]
     pub name: Option<String>,
-    /// Defaults to the workspace folder.
     #[serde(default)]
     pub cwd: Option<String>,
     #[serde(default)]
@@ -184,12 +155,10 @@ impl PaneSpec {
 #[serde(rename_all = "camelCase")]
 pub struct Tab {
     pub id: TabId,
-    /// `None` shows the tab's number.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub name: Option<String>,
     pub layout: Node,
     pub focused: PaneId,
-    /// The focused pane fills the tab; the layout is kept.
     #[serde(default)]
     pub zoomed: bool,
 }
@@ -202,7 +171,6 @@ pub struct Workspace {
     pub cwd: String,
     pub tabs: Vec<Tab>,
     pub active_tab: TabId,
-    /// The folder is on this machine; `None` is this computer.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub machine: Option<MachineId>,
 }
@@ -211,15 +179,12 @@ pub struct Workspace {
 #[serde(rename_all = "camelCase")]
 pub struct State {
     pub workspaces: Vec<Workspace>,
-    /// On the wire this is a plain list: JSON map keys are strings, which
-    /// does not survive every way serde reads a message back.
     #[serde(with = "panes_as_list")]
     pub panes: BTreeMap<PaneId, Pane>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub active_workspace: Option<WorkspaceId>,
     #[serde(default)]
     pub machines: Vec<Machine>,
-    /// One counter for every kind of id, so an id is never reused.
     #[serde(default)]
     pub next_id: u32,
 }
@@ -249,8 +214,6 @@ pub enum ModelError {
     Invalid(&'static str),
 }
 
-/// Everything that disappeared in one close, so the server can stop the
-/// processes and the client can drop its terminals.
 #[derive(Clone, PartialEq, Eq, Debug, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Closed {
@@ -259,7 +222,6 @@ pub struct Closed {
     pub workspace: Option<WorkspaceId>,
 }
 
-/// Ids of a freshly created pane and where it landed.
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Created {
@@ -284,7 +246,6 @@ impl State {
         self.workspaces.iter_mut().find(|w| w.id == id).ok_or(ModelError::NoWorkspace)
     }
 
-    /// Indexes of the workspace and tab that hold a pane.
     pub fn locate(&self, pane: PaneId) -> Option<(usize, usize)> {
         self.workspaces.iter().enumerate().find_map(|(wi, w)| {
             w.tabs.iter().position(|t| t.layout.contains(pane)).map(|ti| (wi, ti))
@@ -335,12 +296,10 @@ impl State {
         }
     }
 
-    /// New workspace with one tab holding one pane. It becomes the active one.
     pub fn create_workspace(&mut self, name: Option<String>, cwd: String, spec: PaneSpec, now: u64) -> Created {
         self.create_workspace_on(None, name, cwd, spec, now)
     }
 
-    /// The same, for a folder on a saved machine.
     pub fn create_remote_workspace(
         &mut self,
         machine: MachineId,
@@ -381,7 +340,6 @@ impl State {
         Created { workspace, tab, pane: pane_id }
     }
 
-    /// New tab at the end of a workspace, holding one pane. It becomes active.
     pub fn create_tab(&mut self, workspace: WorkspaceId, name: Option<String>, spec: PaneSpec, now: u64) -> Res<Created> {
         let ws = self.workspace(workspace).ok_or(ModelError::NoWorkspace)?;
         let (cwd, machine) = (ws.cwd.clone(), ws.machine);
@@ -402,7 +360,6 @@ impl State {
         Ok(Created { workspace, tab, pane: pane_id })
     }
 
-    /// Split `target`; the new pane takes the right/bottom half and the focus.
     pub fn split_pane(&mut self, target: PaneId, dir: Dir, spec: PaneSpec, now: u64) -> Res<Created> {
         let (wi, ti) = self.locate(target).ok_or(ModelError::NoPane)?;
         let (cwd, machine) = (self.workspaces[wi].cwd.clone(), self.workspaces[wi].machine);
@@ -417,8 +374,6 @@ impl State {
         Ok(Created { workspace: ws.id, tab: tab.id, pane: pane_id })
     }
 
-    /// Close one pane. The last pane takes its tab with it, and the last tab
-    /// takes its workspace.
     pub fn close_pane(&mut self, pane: PaneId) -> Res<Closed> {
         let (wi, ti) = self.locate(pane).ok_or(ModelError::NoPane)?;
         self.panes.remove(&pane);
@@ -480,8 +435,6 @@ impl State {
         }
     }
 
-    /// Focus a pane: its tab and workspace become the active ones, and a
-    /// finished agent in it counts as seen.
     pub fn focus_pane(&mut self, pane: PaneId) -> Res<()> {
         let (wi, ti) = self.locate(pane).ok_or(ModelError::NoPane)?;
         let ws = &mut self.workspaces[wi];
@@ -508,7 +461,6 @@ impl State {
         self.select_tab(tab)
     }
 
-    /// Move focus to the pane on `side` of the focused pane of its tab.
     pub fn focus_side(&mut self, from: PaneId, side: Side) -> Res<Option<PaneId>> {
         let tab = self.tab_of_mut(from)?;
         let Some(next) = tab.layout.neighbor(from, side) else { return Ok(None) };
@@ -561,7 +513,6 @@ impl State {
         Ok(())
     }
 
-    /// True when the pane is the one the user is looking at.
     pub fn is_in_view(&self, pane: PaneId) -> bool {
         self.active_workspace
             .and_then(|id| self.workspace(id))
@@ -569,10 +520,6 @@ impl State {
             .is_some_and(|t| if t.zoomed { t.focused == pane } else { t.layout.contains(pane) })
     }
 
-    /// Apply what the detector saw. Returns true when the pane's state changed.
-    ///
-    /// An agent that stops while nobody is looking becomes `Done`, and stays
-    /// `Done` until the pane is seen; that is the "come back to this one" mark.
     pub fn set_detected(&mut self, pane: PaneId, detected: Detected, window_visible: bool) -> bool {
         let seen = window_visible && self.is_in_view(pane);
         let Some(p) = self.panes.get_mut(&pane) else { return false };
@@ -593,7 +540,6 @@ impl State {
         changed
     }
 
-    /// The user looked at a pane: a `Done` mark on it is cleared.
     pub fn mark_seen(&mut self, pane: PaneId) -> bool {
         match self.panes.get_mut(&pane) {
             Some(p) if p.agent == AgentState::Done => {
@@ -620,7 +566,6 @@ impl State {
         true
     }
 
-    /// Highest-ranked agent state among the panes of a tab.
     pub fn tab_state(&self, tab: &Tab) -> AgentState {
         tab.layout
             .panes()
@@ -635,13 +580,10 @@ impl State {
         workspace.tabs.iter().map(|t| self.tab_state(t)).max_by_key(|s| s.rank()).unwrap_or_default()
     }
 
-    /// Make a state read from disk safe to run on: nothing is running yet,
-    /// and any structure that does not hold together is dropped.
     pub fn machine(&self, id: MachineId) -> Option<&Machine> {
         self.machines.iter().find(|m| m.id == id)
     }
 
-    /// Save a machine. Labels are how the user tells machines apart, so they are unique.
     pub fn add_machine(&mut self, label: String, target: String) -> Res<MachineId> {
         if self.machines.iter().any(|m| m.label.eq_ignore_ascii_case(&label)) {
             return Err(ModelError::Invalid("a machine with that name already exists"));
@@ -668,8 +610,6 @@ impl State {
         Ok(())
     }
 
-    /// Forget a machine. Its workspaces must be closed first, so nothing is
-    /// left pointing at a machine that is gone.
     pub fn remove_machine(&mut self, id: MachineId) -> Res<()> {
         if self.machine(id).is_none() {
             return Err(ModelError::Invalid("no such machine"));
@@ -681,7 +621,6 @@ impl State {
         Ok(())
     }
 
-    /// Record a connection check. Returns whether anything changed.
     pub fn set_machine_status(
         &mut self,
         id: MachineId,
@@ -694,7 +633,6 @@ impl State {
         let before = (machine.status, machine.detail.clone(), machine.tmux, machine.claude);
         machine.status = status;
         machine.detail = detail;
-        // A failed check says nothing about what is installed there.
         if status == MachineStatus::Online {
             machine.tmux = tmux;
             machine.claude = claude;
@@ -745,7 +683,6 @@ impl State {
     }
 }
 
-/// Last path component, for naming a workspace after its folder.
 pub fn folder_name(path: &str) -> String {
     path.trim_end_matches(['/', '\\'])
         .rsplit(['/', '\\'])
@@ -854,7 +791,6 @@ mod tests {
     fn an_agent_that_stops_out_of_sight_is_done_until_seen() {
         let (mut s, a) = state();
         let b = s.create_tab(a.workspace, None, claude(), 2).unwrap();
-        // `a` is on a background tab now.
         assert!(s.set_detected(a.pane, Detected::Working, true));
         assert!(s.set_detected(a.pane, Detected::Idle, true));
         assert_eq!(s.panes[&a.pane].agent, AgentState::Done);
@@ -864,7 +800,6 @@ mod tests {
         s.focus_pane(a.pane).unwrap();
         assert_eq!(s.panes[&a.pane].agent, AgentState::Idle);
 
-        // In view: goes straight to idle. With the window hidden it does not.
         s.set_detected(a.pane, Detected::Working, true);
         s.set_detected(a.pane, Detected::Idle, true);
         assert_eq!(s.panes[&a.pane].agent, AgentState::Idle);
@@ -905,7 +840,6 @@ mod tests {
         let (mut s, c) = state();
         let other = s.create_tab(c.workspace, None, claude(), 2).unwrap();
         s.set_detected(c.pane, Detected::Working, true);
-        // A tab pointing at a pane that is not in the map, and a stray pane.
         s.panes.remove(&other.pane);
         let stray = s.new_pane(claude(), "/x", None, 3);
         s.panes.insert(stray.id, stray);

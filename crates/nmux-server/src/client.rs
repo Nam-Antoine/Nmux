@@ -1,5 +1,3 @@
-//! Talks to a running `nmux-server`. Used by the desktop window and by tests.
-
 use std::collections::HashMap;
 use std::path::Path;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -18,12 +16,9 @@ pub struct Client {
     requests: mpsc::Sender<Request>,
     pending: Pending,
     next_id: AtomicU64,
-    /// Process id of the server, from its hello.
     pub server_pid: u32,
 }
 
-/// Connect to the server that owns `data_dir`. The second value yields the
-/// server's events and ends when the connection does.
 pub async fn connect(data_dir: &Path) -> std::io::Result<(Client, mpsc::UnboundedReceiver<Event>)> {
     let endpoint = read_endpoint(data_dir)
         .ok_or_else(|| std::io::Error::new(std::io::ErrorKind::NotFound, "no nmux-server is running"))?;
@@ -39,7 +34,6 @@ async fn open(address: &str) -> std::io::Result<tokio::net::windows::named_pipe:
     loop {
         match ClientOptions::new().open(address) {
             Ok(pipe) => return Ok(pipe),
-            // Every instance is taken for a moment while the server makes the next one.
             Err(e) if e.raw_os_error() == Some(ERROR_PIPE_BUSY) && tries < 40 => {
                 tries += 1;
                 tokio::time::sleep(Duration::from_millis(25)).await;
@@ -98,7 +92,6 @@ where
                 }
             }
         }
-        // Connection gone: fail whoever is still waiting, and end the event stream.
         if let Ok(mut map) = waiting.lock() {
             map.clear();
         }

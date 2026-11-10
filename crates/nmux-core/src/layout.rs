@@ -1,18 +1,9 @@
-//! Binary split tree for the panes of one tab.
-//!
-//! A tab is a tree whose leaves are panes and whose inner nodes split their
-//! area in two, side by side (`Dir::Right`) or stacked (`Dir::Down`). All
-//! geometry here is in unit coordinates (0..1); the UI scales it to pixels, so
-//! the server never needs to know the window size to answer "what is left of
-//! this pane".
-
 use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Debug, Serialize, Deserialize)]
 #[serde(transparent)]
 pub struct PaneId(pub u32);
 
-/// How a split divides its area. `Right` puts `b` to the right of `a`.
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum Dir {
@@ -29,8 +20,6 @@ pub enum Side {
     Down,
 }
 
-/// A split never gives a child less than this share, so a pane cannot be
-/// dragged out of existence.
 pub const MIN_RATIO: f32 = 0.1;
 pub const MAX_RATIO: f32 = 0.9;
 
@@ -54,7 +43,6 @@ pub enum Node {
     },
     Split {
         dir: Dir,
-        /// Share of the area given to `a`.
         ratio: f32,
         a: Box<Node>,
         b: Box<Node>,
@@ -68,7 +56,6 @@ impl Node {
         Node::Leaf { pane }
     }
 
-    /// Panes in reading order (left to right, top to bottom within the tree).
     pub fn panes(&self) -> Vec<PaneId> {
         let mut out = Vec::new();
         self.collect(&mut out);
@@ -92,7 +79,6 @@ impl Node {
         }
     }
 
-    /// Split `target` in two; the new pane takes the right/bottom half.
     pub fn split(&mut self, target: PaneId, dir: Dir, new: PaneId) -> bool {
         match self {
             Node::Leaf { pane } if *pane == target => {
@@ -109,8 +95,6 @@ impl Node {
         }
     }
 
-    /// Remove a pane; its sibling takes over the freed area. `None` means the
-    /// tree is now empty.
     pub fn remove(self, id: PaneId) -> Option<Node> {
         match self {
             Node::Leaf { pane } if pane == id => None,
@@ -123,7 +107,6 @@ impl Node {
         }
     }
 
-    /// Exchange the positions of two panes.
     pub fn swap(&mut self, x: PaneId, y: PaneId) -> bool {
         if x == y || !self.contains(x) || !self.contains(y) {
             return false;
@@ -150,7 +133,6 @@ impl Node {
         }
     }
 
-    /// Where each pane sits inside the unit square.
     pub fn rects(&self) -> Vec<(PaneId, Rect)> {
         let mut out = Vec::new();
         self.place(Rect::UNIT, &mut out);
@@ -168,8 +150,6 @@ impl Node {
         }
     }
 
-    /// The pane you land on when moving focus from `from` towards `side`:
-    /// the one touching that edge with the largest shared border.
     pub fn neighbor(&self, from: PaneId, side: Side) -> Option<PaneId> {
         let rects = self.rects();
         let me = rects.iter().find(|(p, _)| *p == from)?.1;
@@ -202,8 +182,6 @@ impl Node {
         best.map(|(p, _)| p)
     }
 
-    /// Set the ratio of the split reached by `path` (0 = first child, 1 =
-    /// second). Used when a border is dragged.
     pub fn set_ratio(&mut self, path: &[u8], value: f32) -> bool {
         match (self, path.split_first()) {
             (Node::Split { ratio, .. }, None) => {
@@ -219,11 +197,8 @@ impl Node {
         }
     }
 
-    /// Move the border on `side` of a pane by `delta` (share of the split's
-    /// own area; positive grows the pane). Used by keyboard resize.
     pub fn resize(&mut self, id: PaneId, side: Side, delta: f32) -> bool {
         let Node::Split { dir, ratio, a, b } = self else { return false };
-        // Deepest matching split wins: try the children first.
         if a.contains(id) {
             if a.resize(id, side, delta) {
                 return true;
@@ -244,8 +219,6 @@ impl Node {
         false
     }
 
-    /// True when the tree is well formed: no pane appears twice and every
-    /// ratio is usable. Checked on anything read from disk.
     pub fn is_valid(&self) -> bool {
         let mut seen = std::collections::HashSet::new();
         self.panes().iter().all(|p| seen.insert(*p)) && self.ratios_ok()
@@ -286,8 +259,6 @@ mod tests {
         PaneId(n)
     }
 
-    /// 1 | 2
-    ///   | 3
     fn three() -> Node {
         let mut t = Node::leaf(p(1));
         assert!(t.split(p(1), Dir::Right, p(2)));
@@ -351,17 +322,14 @@ mod tests {
     #[test]
     fn resize_moves_the_nearest_matching_border() {
         let mut t = three();
-        // Pane 3's top border is the inner split.
         assert!(t.resize(p(3), Side::Up, 0.1));
         let Node::Split { b, ratio, .. } = &t else { panic!() };
         assert_eq!(*ratio, 0.5);
         let Node::Split { ratio: inner, .. } = b.as_ref() else { panic!() };
         assert!((*inner - 0.4).abs() < 1e-5);
-        // Its left border is the outer split.
         assert!(t.resize(p(3), Side::Left, 0.1));
         let Node::Split { ratio, .. } = &t else { panic!() };
         assert!((*ratio - 0.4).abs() < 1e-5);
-        // Nothing to the right of it.
         assert!(!t.resize(p(3), Side::Right, 0.1));
     }
 

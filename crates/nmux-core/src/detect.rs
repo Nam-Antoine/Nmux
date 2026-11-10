@@ -1,29 +1,15 @@
-//! Reads an agent's state off its terminal.
-//!
-//! Two inputs: the window title the agent sets (`OSC 0/2`), and the text on
-//! the bottom of its screen. Claude Code animates a glyph at the start of the
-//! title while a turn runs and shows `✳` at rest, which is a far better
-//! "working" signal than output flow. Whether it is waiting on the user can
-//! only be read from the screen: the permission and question forms it draws.
-//!
-//! The Claude rules are a reduced port of herdr's detection manifest
-//! (<https://github.com/herdrdev/herdr>, Apache-2.0, `src/detect/manifests/claude.toml`).
-
 use crate::model::Detected;
 
 const ESC: char = '\x1b';
 const BEL: char = '\x07';
-/// An unterminated OSC longer than this is not a title; drop it.
 const MAX_PENDING: usize = 1024;
 
-/// Pulls window titles out of raw PTY output, across chunk boundaries.
 #[derive(Default)]
 pub struct TitleWatcher {
     pending: String,
 }
 
 impl TitleWatcher {
-    /// Feed output; returns the last complete title in it, if any.
     pub fn push(&mut self, data: &str) -> Option<String> {
         let text = std::mem::take(&mut self.pending) + data;
         let mut title = None;
@@ -37,7 +23,6 @@ impl TitleWatcher {
                 (Some(b), _) => (b, 1),
                 (None, Some(s)) => (s, 2),
                 (None, None) => {
-                    // Split across chunks: keep the start for the next call.
                     let tail = &rest[start..];
                     if tail.len() <= MAX_PENDING {
                         self.pending = tail.to_string();
@@ -51,7 +36,6 @@ impl TitleWatcher {
             }
             rest = &body[end + skip..];
         }
-        // A lone ESC at the very end may be the start of the next OSC.
         if rest.ends_with(ESC) {
             self.pending = ESC.to_string();
         }
@@ -59,8 +43,6 @@ impl TitleWatcher {
     }
 }
 
-/// Does this title say a turn is running? Half-circle spinner in current
-/// Claude Code, braille dots in versions up to 2.1.227.
 pub fn title_is_working(title: &str) -> bool {
     title
         .trim_start()
@@ -69,22 +51,18 @@ pub fn title_is_working(title: &str) -> bool {
         .is_some_and(|c| matches!(c, '\u{25D0}'..='\u{25D3}' | '\u{2800}'..='\u{28FF}'))
 }
 
-/// How many lines from the bottom of the screen the forms are looked for in.
 const RECENT_LINES: usize = 40;
 
-/// Is Claude waiting on the user? `screen` is the visible text, one line per row.
 pub fn screen_is_blocked(screen: &str) -> bool {
     let lines: Vec<&str> = screen.lines().map(str::trim_end).filter(|l| !l.trim().is_empty()).collect();
     let recent = lines[lines.len().saturating_sub(RECENT_LINES)..].join("\n").to_lowercase();
 
-    // Question and selection forms: a footer naming both the confirm and the cancel key.
     let form = recent.contains("esc to cancel")
         && (recent.contains("enter to confirm")
             || (recent.contains("enter to select")
                 && ["keys to navigate", "arrows to navigate", "↑/↓ to navigate", "↑↓ to navigate"]
                     .iter()
                     .any(|k| recent.contains(k))));
-    // The model picker has the same footer but is the user's own doing.
     let picker = recent.contains("select model") && recent.contains("enter to set as default");
 
     let permission = recent.contains("do you want to proceed?")
@@ -95,8 +73,6 @@ pub fn screen_is_blocked(screen: &str) -> bool {
     (form && !picker) || permission
 }
 
-/// Combine both signals. `None` means there is nothing to go on yet (no title
-/// seen and no form on screen), so the state is left as it is.
 pub fn classify(title: Option<&str>, screen: &str) -> Option<Detected> {
     if screen_is_blocked(screen) {
         return Some(Detected::Blocked);
@@ -115,7 +91,6 @@ mod tests {
         assert_eq!(w.push("a\x1b]0;✳ Fix bug\x07b"), Some("✳ Fix bug".to_string()));
         assert_eq!(w.push("\x1b]2;◐ Fix bug\x1b\\"), Some("◐ Fix bug".to_string()));
         assert_eq!(w.push("plain output"), None);
-        // Other OSCs (hyperlinks, colours) are not titles.
         assert_eq!(w.push("\x1b]8;;http://x\x07link\x1b]8;;\x07"), None);
     }
 

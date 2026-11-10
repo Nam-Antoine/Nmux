@@ -1,23 +1,11 @@
-//! Read-only knowledge of where Claude Code keeps conversation transcripts,
-//! so Nmux can tell whether `claude --resume <id>` has anything to resume.
-//!
-//! Layout (Claude Code 2.x): `<config dir>/projects/<encoded cwd>/<session id>.jsonl`
-//! where the config dir is `$CLAUDE_CONFIG_DIR` or `~/.claude`, and the cwd is
-//! encoded by replacing every non-alphanumeric character with `-`.
-
 use std::io::Read;
 use std::path::{Path, PathBuf};
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Transcript {
-    /// At least one message: `--resume` will work.
     Resumable,
-    /// The file exists but holds no messages (e.g. only a Remote Control
-    /// bridge record). `--resume` fails and the id cannot be reused.
     Empty,
-    /// No transcript: the conversation never got a message.
     Missing,
-    /// Claude's project folder for this cwd is not where we expect; assume nothing.
     Unknown,
 }
 
@@ -42,7 +30,6 @@ pub fn transcript_path(config_dir: &Path, cwd: &str, session_id: &str) -> PathBu
 
 const MARKERS: [&[u8]; 2] = [b"\"type\":\"user\"", b"\"type\":\"assistant\""];
 const CHUNK: usize = 64 * 1024;
-/// Stop scanning after this much; a message shows up early if there is one.
 const MAX_SCAN: usize = 8 * 1024 * 1024;
 
 pub fn state(config_dir: &Path, cwd: &str, session_id: &str) -> Transcript {
@@ -66,7 +53,6 @@ pub fn state(config_dir: &Path, cwd: &str, session_id: &str) -> Transcript {
 fn has_messages(file: &Path) -> std::io::Result<bool> {
     let mut f = std::fs::File::open(file)?;
     let mut buf = vec![0u8; CHUNK];
-    // Keep a tail so a marker split across chunks is still found.
     let mut window: Vec<u8> = Vec::new();
     let mut scanned = 0;
     while scanned < MAX_SCAN {
@@ -111,7 +97,6 @@ mod tests {
         std::fs::write(project.join("a.jsonl"), "{\"type\":\"bridge-session\"}\n").unwrap();
         assert_eq!(state(dir.path(), cwd, "a"), Transcript::Empty);
 
-        // A marker that straddles the chunk boundary is still found.
         let mut body = vec![b' '; CHUNK - 6];
         body.extend_from_slice(b"{\"type\":\"user\",\"x\":1}\n");
         std::fs::write(project.join("a.jsonl"), body).unwrap();

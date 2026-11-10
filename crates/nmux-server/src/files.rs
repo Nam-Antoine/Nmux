@@ -1,9 +1,3 @@
-//! Read-only file access for the files panel, and staging of pasted images.
-//!
-//! Every path a client sends is resolved (symlinks included) and must end up
-//! inside one of the workspace folders. The window is not trusted to stay in
-//! its lane: the check is here.
-
 use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, SystemTime};
@@ -11,15 +5,12 @@ use std::time::{Duration, SystemTime};
 use base64::Engine;
 use nmux_proto::{DirEntry, FileContent, FilePreview};
 
-/// Text files are previewed up to this many bytes.
 const MAX_TEXT: u64 = 512 * 1024;
 const MAX_IMAGE: u64 = 8 * 1024 * 1024;
 const MAX_ENTRIES: usize = 5000;
 const MAX_PASTE: usize = 10 * 1024 * 1024;
 const PASTE_MAX_AGE: Duration = Duration::from_secs(24 * 60 * 60);
 
-/// Drop the `\\?\` prefix Windows adds when resolving a path; it confuses
-/// both people and most programs a path gets handed to.
 pub fn display(path: &Path) -> String {
     let text = path.to_string_lossy();
     match text.strip_prefix(r"\\?\UNC\") {
@@ -28,7 +19,6 @@ pub fn display(path: &Path) -> String {
     }
 }
 
-/// Resolve `path` and require it to be inside one of `roots`.
 pub fn resolve_inside(path: &str, roots: &[String]) -> Result<PathBuf, String> {
     if path.is_empty() || path.len() > 4096 || path.contains('\0') {
         return Err("bad path".into());
@@ -47,7 +37,6 @@ pub fn list_dir(path: &str, roots: &[String]) -> Result<(String, Vec<DirEntry>),
     let mut entries = Vec::new();
     for entry in std::fs::read_dir(&dir).map_err(|e| e.to_string())? {
         let Ok(entry) = entry else { continue };
-        // Follows links, so a link to a folder opens like one; a dangling link is skipped.
         let Ok(meta) = std::fs::metadata(entry.path()) else { continue };
         entries.push(DirEntry {
             name: entry.file_name().to_string_lossy().into_owned(),
@@ -69,7 +58,6 @@ fn image_mime(path: &Path) -> Option<&'static str> {
         "gif" => Some("image/gif"),
         "webp" => Some("image/webp"),
         "bmp" => Some("image/bmp"),
-        // Not SVG: it is markup that can carry script, and it previews fine as text.
         _ => None,
     }
 }
@@ -104,7 +92,6 @@ pub fn read_file(path: &str, roots: &[String]) -> Result<FilePreview, String> {
     Ok(FilePreview { path: display(&file), size, content })
 }
 
-/// The image type the bytes really are, whatever the client called them.
 fn sniff_image(bytes: &[u8]) -> Option<&'static str> {
     if bytes.starts_with(b"\x89PNG\r\n\x1a\n") {
         Some("png")
@@ -121,8 +108,6 @@ fn sniff_image(bytes: &[u8]) -> Option<&'static str> {
     }
 }
 
-/// Write a pasted image to a file under the data directory and return its
-/// path. Agents take an image as a path typed into their prompt.
 pub fn stage_pasted_image(data_dir: &Path, base64_data: &str) -> Result<PathBuf, String> {
     if base64_data.len() > MAX_PASTE * 4 / 3 + 4 {
         return Err("that image is too large to paste".into());
@@ -171,7 +156,6 @@ mod tests {
         let names: Vec<_> = entries.iter().map(|e| (e.name.as_str(), e.dir, e.size)).collect();
         assert_eq!(names, [("src", true, 0), ("A.md", false, 1), ("b.txt", false, 2)]);
 
-        // Parent, sibling and dot-dot paths are refused.
         assert!(list_dir(&dir.path().to_string_lossy(), &roots(&root)).is_err());
         let sneaky = root.join("src").join("..").join("..").join("secret.txt");
         assert!(read_file(&sneaky.to_string_lossy(), &roots(&root)).unwrap_err().contains("outside"));

@@ -1,5 +1,3 @@
-//! One child process on a pseudo-terminal.
-
 use std::collections::BTreeMap;
 use std::io::{Read, Write};
 use std::time::Duration;
@@ -11,8 +9,6 @@ use crate::launch::Launch;
 
 pub struct PtyProcess {
     master: Box<dyn MasterPty + Send>,
-    /// Input goes through a thread: a child that stops reading must not be
-    /// able to stall the server on a full pipe.
     input: std::sync::mpsc::Sender<Vec<u8>>,
     killer: Box<dyn ChildKiller + Send + Sync>,
     pub pid: Option<u32>,
@@ -22,13 +18,9 @@ fn size(cols: u16, rows: u16) -> PtySize {
     PtySize { rows, cols, pixel_width: 0, pixel_height: 0 }
 }
 
-/// How long after the child exits its last output is still collected before
-/// the exit is reported. ConPTY delivers the tail asynchronously.
 const DRAIN: Duration = Duration::from_millis(150);
 
 impl PtyProcess {
-    /// Start `launch` in `cwd`. `on_data` gets raw output on a reader thread;
-    /// `on_exit` is called once, after the process has ended.
     pub fn spawn(
         launch: &Launch,
         cwd: &str,
@@ -49,7 +41,6 @@ impl PtyProcess {
         }
         let mut child =
             pair.slave.spawn_command(cmd).with_context(|| format!("could not start {}", launch.file))?;
-        // The child holds its own end; keeping ours open would stop EOF from arriving.
         drop(pair.slave);
 
         let pid = child.process_id();
@@ -99,8 +90,6 @@ impl PtyProcess {
 
 impl Drop for PtyProcess {
     fn drop(&mut self) {
-        // Dropping the master closes the pseudo-console, which ends the reader
-        // thread; the kill covers a child that ignores the hangup.
         self.kill();
     }
 }

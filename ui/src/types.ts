@@ -1,5 +1,3 @@
-// Mirrors of the Rust types in `nmux-core` and `nmux-proto`, as they appear on the wire.
-
 export type PaneId = number
 export type TabId = number
 export type WorkspaceId = number
@@ -17,7 +15,6 @@ export type LayoutNode =
 
 export type MachineStatus = 'unknown' | 'checking' | 'online' | 'auth' | 'error'
 
-/** Another computer, reached with the user's own ssh. */
 export interface Machine {
   id: MachineId
   label: string
@@ -113,6 +110,7 @@ export type Op =
   | { op: 'readFile'; path: string }
   | { op: 'pasteImage'; pane: PaneId; extension: string; data: string }
   | { op: 'listPorts' }
+  | { op: 'listMachinePorts'; machine: MachineId }
   | { op: 'listForwards' }
   | { op: 'startForward'; host: string; remotePort: number; localPort?: number }
   | { op: 'stopForward'; id: number }

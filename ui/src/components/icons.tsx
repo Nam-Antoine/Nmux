@@ -1,4 +1,4 @@
-import type { AgentState, Pane, PaneKind } from '../types'
+import type { AgentState, PaneKind } from '../types'
 
 const base = { width: 16, height: 16, viewBox: '0 0 16 16', fill: 'none', stroke: 'currentColor', strokeWidth: 1.4, strokeLinecap: 'round', strokeLinejoin: 'round' } as const
 
@@ -51,12 +51,6 @@ export const Monitor = () => (
 export const ServerIcon = () => (
   <svg {...base}><rect x="2.5" y="3" width="11" height="4.2" rx="1.2" /><rect x="2.5" y="8.8" width="11" height="4.2" rx="1.2" /></svg>
 )
-export const Gear = () => (
-  <svg {...base}>
-    <circle cx="8" cy="8" r="2" />
-    <path d="M8 1.8l1.1 1.6 1.9-.4.6 1.9 1.8.8-.6 1.8.9 1.7-1.6 1.1-.2 2-1.9.1L8 14.2l-1.9-1.8-1.9-.1-.2-2-1.6-1.1.9-1.7-.6-1.8 1.8-.8.6-1.9 1.9.4z" />
-  </svg>
-)
 export const Keyboard = () => (
   <svg {...base}><rect x="1.8" y="4" width="12.4" height="8" rx="1.6" /><path d="M4.5 6.8h.01M7 6.8h.01M9.5 6.8h.01M11.6 6.8h.01M5 9.5h6" /></svg>
 )
@@ -70,7 +64,6 @@ export const WinClose = () => (
   <svg {...base} strokeWidth={1.1}><path d="M3.5 3.5l9 9M12.5 3.5l-9 9" /></svg>
 )
 
-/** What kind of thing runs in a pane. */
 export function KindIcon({ kind }: { kind: PaneKind }): React.JSX.Element {
   if (kind === 'shell') {
     return (
@@ -82,7 +75,6 @@ export function KindIcon({ kind }: { kind: PaneKind }): React.JSX.Element {
       <svg {...base} className="kind-icon cloud"><path d="M4.8 12a2.6 2.6 0 01-.3-5.2 3.6 3.6 0 017 .8A2.2 2.2 0 0111.4 12z" /></svg>
     )
   }
-  // A small pixel creature, in the manner of terminal agent mascots.
   return (
     <svg width="16" height="13" viewBox="0 0 20 16" className="kind-icon claude" fill="currentColor" shapeRendering="crispEdges">
       <path d="M3 3h14v8H3z" />
@@ -103,14 +95,9 @@ const STATE_TITLE: Record<AgentState, string> = {
   unknown: ''
 }
 
-/** The dot that says what an agent is doing. */
 export function StateDot({ state, exited }: { state: AgentState; exited?: boolean }): React.JSX.Element {
   const cls = exited ? 'exited' : state
   return <span className={`dot ${cls}`} title={exited ? 'Not running' : STATE_TITLE[state]} />
-}
-
-export function paneState(pane: Pane | undefined): { state: AgentState; exited: boolean } {
-  return { state: pane?.agent ?? 'unknown', exited: pane?.status === 'exited' }
 }
 
 const AVATAR_COLORS = ['#5b8def', '#8b6cf0', '#3fb37f', '#e0823d', '#d9577a', '#2fa8b5', '#c9a227']

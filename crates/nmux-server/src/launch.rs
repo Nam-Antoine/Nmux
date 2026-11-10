@@ -1,5 +1,3 @@
-//! Builds the command lines Nmux spawns.
-
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
@@ -14,11 +12,9 @@ pub struct Launch {
 type Env = BTreeMap<String, String>;
 
 fn env_get<'a>(env: &'a Env, key: &str) -> Option<&'a str> {
-    // Windows variable names are case-insensitive (`Path` vs `PATH`).
     env.iter().find(|(k, _)| k.eq_ignore_ascii_case(key)).map(|(_, v)| v.as_str())
 }
 
-/// Resolve an executable on PATH, honouring PATHEXT on Windows.
 pub fn find_on_path(name: &str, env: &Env) -> Option<PathBuf> {
     let path = env_get(env, "PATH")?;
     let exts: Vec<String> = if cfg!(windows) {
@@ -49,7 +45,6 @@ fn is_cmd_shim(bin: &str) -> bool {
 }
 
 fn claude_binary(bin: String, args: Vec<String>, env: &Env) -> Launch {
-    // An npm-installed claude is a .cmd shim on Windows; ConPTY needs cmd.exe to run it.
     if is_cmd_shim(&bin) {
         let comspec = env_get(env, "COMSPEC").unwrap_or("cmd.exe").to_string();
         let mut all = vec!["/d".to_string(), "/c".to_string(), bin];
@@ -62,14 +57,10 @@ fn claude_binary(bin: String, args: Vec<String>, env: &Env) -> Launch {
 const SKIP_PERMISSIONS_FLAG: &str = "--dangerously-skip-permissions";
 
 pub struct ClaudeOptions<'a> {
-    /// UUID Nmux owns for this conversation.
     pub session_id: &'a str,
-    /// true: `--resume <id>`; false: `--session-id <id>`.
     pub resume: bool,
     pub extra_args: &'a [String],
     pub skip_permissions: bool,
-    /// Start from this cloud session: `--teleport <id>`, keeping `--session-id`
-    /// so Nmux owns the local id.
     pub teleport: Option<&'a str>,
 }
 
@@ -86,16 +77,12 @@ pub fn claude(opts: ClaudeOptions, env: &Env) -> Launch {
     if opts.skip_permissions {
         args.push(SKIP_PERMISSIONS_FLAG.to_string());
     }
-    // The flag is owned by `skip_permissions`; drop a duplicate typed into extra args.
     args.extend(opts.extra_args.iter().filter(|a| !(opts.skip_permissions && *a == SKIP_PERMISSIONS_FLAG)).cloned());
     claude_binary(claude_bin(env), args, env)
 }
 
-/// `claude --cloud "<task>"`: creates an Anthropic cloud session on the
-/// folder's repo and branch, prints its id and link, and exits.
 pub fn cloud(task: &str, extra_args: &[String], env: &Env) -> Launch {
     let bin = claude_bin(env);
-    // A cmd.exe shim would re-parse the task text (quotes, %VAR%, &), so keep it on one safe line there.
     let task: String = if is_cmd_shim(&bin) {
         task.chars().map(|c| if matches!(c, '"' | '%' | '\r' | '\n') { ' ' } else { c }).collect()
     } else {
@@ -118,10 +105,6 @@ pub fn shell(env: &Env) -> Launch {
     }
 }
 
-/// Variables a running Claude Code instance sets for its children. If Nmux is
-/// started from inside a Claude Code session, inheriting these makes a nested
-/// `claude` think it is a child session and refuse to start. User settings
-/// such as CLAUDE_CODE_USE_BEDROCK or ANTHROPIC_* are deliberately left alone.
 const NESTED_CLAUDE_MARKERS: &[&str] = &[
     "CLAUDECODE",
     "CLAUDE_PID",
@@ -135,12 +118,10 @@ const NESTED_CLAUDE_MARKERS: &[&str] = &[
     "CLAUDE_CODE_MESSAGING_TOKEN",
 ];
 
-/// Environment for a spawned pane, from the server's own.
 pub fn pane_env(base: &Env, pane: PaneId) -> Env {
     let mut env: Env = base
         .iter()
         .filter(|(k, _)| !NESTED_CLAUDE_MARKERS.contains(&k.as_str()) && !k.starts_with("ELECTRON_"))
-        // An outer Nmux (the Electron one, during the migration) must not leak its id in.
         .filter(|(k, _)| !k.starts_with("NMUX_"))
         .map(|(k, v)| (k.clone(), v.clone()))
         .collect();
@@ -164,7 +145,6 @@ mod tests {
     use super::*;
 
     fn env() -> Env {
-        // No PATH: the bare binary name is used, so the test does not depend on the machine.
         Env::new()
     }
 

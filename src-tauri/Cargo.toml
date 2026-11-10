@@ -11,7 +11,6 @@ tauri-build = { version = "2", features = [] }
 [dependencies]
 nmux-proto = { path = "../crates/nmux-proto" }
 nmux-server = { path = "../crates/nmux-server" }
-# custom-protocol: serve the built UI from inside the binary (there is no dev server).
 tauri = { version = "2", features = ["tray-icon", "custom-protocol"] }
 tauri-plugin-dialog = "2"
 tauri-plugin-notification = "2"

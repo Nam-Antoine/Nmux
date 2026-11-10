@@ -1,12 +1,3 @@
-//! Finds the cloud session id and link in `claude --cloud` output, e.g.
-//!
-//! ```text
-//! Created cloud session: Codebase check
-//! View: https://claude.ai/code/session_01PbVN3TZ73CTZQcg8YVCbii?from=cli
-//! Resume with: claude --teleport session_01PbVN3TZ73CTZQcg8YVCbii
-//! ```
-
-/// Characters of recent plain text kept between chunks.
 const KEEP: usize = 4096;
 const URL_PREFIX: &str = "https://claude.ai/code/";
 
@@ -22,7 +13,6 @@ pub struct CloudIdSniffer {
 }
 
 impl CloudIdSniffer {
-    /// Feed raw PTY output. Returns the id once it has been printed in full.
     pub fn push(&mut self, data: &str) -> Option<CloudMatch> {
         self.text.push_str(&to_plain_text(data));
         if self.text.len() > KEEP {
@@ -47,8 +37,6 @@ fn find(text: &str) -> Option<CloudMatch> {
         let rest = &text[start..];
         let len = rest.find(|c: char| !is_id_char(c));
         from = start;
-        // The id must be followed by something that is not part of an id, so
-        // a chunk that ends mid-id cannot hand back a truncated one.
         let Some(len) = len else { return None };
         let id = &rest[..len];
         let body = id.strip_prefix("session_").or_else(|| id.strip_prefix("cse_"));
@@ -59,8 +47,6 @@ fn find(text: &str) -> Option<CloudMatch> {
     None
 }
 
-/// Drop terminal control sequences. Cursor-forward (`CSI n C`) becomes
-/// spaces: Claude's renderer uses it instead of writing blanks between words.
 pub fn to_plain_text(data: &str) -> String {
     let mut out = String::with_capacity(data.len());
     let mut chars = data.chars().peekable();
@@ -72,7 +58,6 @@ pub fn to_plain_text(data: &str) -> String {
             continue;
         }
         match chars.next() {
-            // OSC (titles, hyperlinks): up to BEL or ESC \.
             Some(']') => {
                 while let Some(n) = chars.next() {
                     if n == '\x07' {

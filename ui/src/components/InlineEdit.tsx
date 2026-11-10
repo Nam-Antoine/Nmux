@@ -1,6 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
 
-/** A text field that replaces a label while it is being renamed. */
 export function InlineEdit({ value, onDone }: { value: string; onDone: (value: string | null) => void }): React.JSX.Element {
   const [text, setText] = useState(value)
   const ref = useRef<HTMLInputElement>(null)

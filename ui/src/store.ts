@@ -1,4 +1,3 @@
-// The window's copy of the server's model, plus a little UI-only state.
 import { useSyncExternalStore } from 'react'
 import { call, notify, onConnected, onDisconnected, onFileDrop, onServerEvent } from './api'
 import { terminals } from './terminals'
@@ -13,16 +12,13 @@ export type Dialog =
 
 export interface Store {
   state: State
-  /** Panes by id, rebuilt on every state update. */
   panes: Map<PaneId, Pane>
   connected: boolean
   problem: string | null
   sidebarOpen: boolean
   dialog: Dialog
-  /** Which side panel is open on the right. */
   panel: 'files' | 'ports' | null
   forwards: Forward[]
-  /** The prefix key was pressed; the next key is an Nmux command. */
   prefix: boolean
   toast: string | null
 }
@@ -75,7 +71,6 @@ export function toast(message: string): void {
   toastTimer = window.setTimeout(() => update({ toast: null }), 5000)
 }
 
-/** Run a request and show the server's reason if it is refused. */
 export async function run(op: Parameters<typeof call>[0]): Promise<Awaited<ReturnType<typeof call>> | null> {
   try {
     return await call(op)
@@ -85,8 +80,7 @@ export async function run(op: Parameters<typeof call>[0]): Promise<Awaited<Retur
   }
 }
 
-/** Ask the server to try every saved machine again. The answers arrive as state. */
-export function checkMachines(): void {
+function checkMachines(): void {
   for (const machine of store.state.machines) {
     if (machine.status !== 'checking') void call({ op: 'checkMachine', machine: machine.id }).catch(() => {})
   }
@@ -120,7 +114,6 @@ export async function start(): Promise<void> {
     }
   })
   await onConnected(() => void refresh())
-  // Files dropped on a pane are typed into it as paths (how agents take images and files).
   await onFileDrop((paths, x, y) => {
     const under = (document.elementFromPoint(x, y) as HTMLElement | null)?.closest<HTMLElement>('[data-pane]')
     const pane = under ? Number(under.dataset.pane) : activeTab(store)?.focused
@@ -132,15 +125,11 @@ export async function start(): Promise<void> {
   document.addEventListener('visibilitychange', () => {
     if (store.connected) void call({ op: 'setWindowVisible', visible: !document.hidden }).catch(() => {})
   })
-  // A machine that went away, or came back, shows within a minute.
   window.setInterval(() => {
     if (store.connected && !document.hidden) checkMachines()
   }, 60_000)
-  // The shell may have connected before this page was listening.
   await refresh()
 }
-
-// ---- selectors -------------------------------------------------------------
 
 export function activeWorkspace(s: Store): Workspace | undefined {
   return s.state.workspaces.find((w) => w.id === s.state.activeWorkspace) ?? s.state.workspaces[0]

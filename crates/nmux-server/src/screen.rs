@@ -1,9 +1,3 @@
-//! The server's copy of a pane's screen.
-//!
-//! Every byte a pane prints also goes through a terminal emulator here. That
-//! copy is what lets a window attach later and see the pane exactly as it is
-//! (screen and scrollback), and it is the text agent detection reads.
-
 use nmux_core::detect::TitleWatcher;
 
 pub const DEFAULT_COLS: u16 = 120;
@@ -14,9 +8,7 @@ pub struct Screen {
     parser: vt100::Parser,
     carry: Vec<u8>,
     titles: TitleWatcher,
-    /// Last window title the pane set.
     pub title: Option<String>,
-    /// Number of output chunks so far.
     pub seq: u64,
 }
 
@@ -50,8 +42,6 @@ impl Screen {
         true
     }
 
-    /// Take raw output. Returns it as text for the clients; bytes of a
-    /// character cut by the chunk boundary are held back for the next call.
     pub fn feed(&mut self, bytes: &[u8]) -> String {
         self.parser.process(bytes);
         self.carry.extend_from_slice(bytes);
@@ -63,31 +53,24 @@ impl Screen {
         text
     }
 
-    /// Cursor position as (row, column), counted from 1 as terminals report it.
     pub fn cursor(&self) -> (u16, u16) {
         let (row, col) = self.parser.screen().cursor_position();
         (row + 1, col + 1)
     }
 
-    /// Whether the program in the pane asked for pastes to be marked as such.
     pub fn bracketed_paste(&self) -> bool {
         self.parser.screen().bracketed_paste()
     }
 
-    /// Visible text, one line per row. What agent detection reads.
     pub fn text(&self) -> String {
         self.parser.screen().contents()
     }
 
-    /// Escape sequences that reproduce scrollback and screen in a fresh
-    /// terminal of the same size.
     pub fn snapshot(&mut self) -> String {
         let (cols, rows) = self.size();
         let mut out: Vec<u8> = Vec::new();
 
         if !self.parser.screen().alternate_screen() {
-            // vt100 exposes history only by scrolling the view: at offset k
-            // the top visible row is the k-th line back.
             self.parser.screen_mut().set_scrollback(usize::MAX);
             let history = self.parser.screen().scrollback();
             for back in (1..=history).rev() {
@@ -98,8 +81,6 @@ impl Screen {
                 out.extend_from_slice(b"\x1b[m\r\n");
             }
             self.parser.screen_mut().set_scrollback(0);
-            // The live screen is drawn from the top-left with a clear, so the
-            // history lines still in view have to be scrolled off first.
             let in_view = history.min(rows as usize - 1);
             if in_view > 0 {
                 out.extend_from_slice(format!("\x1b[{rows};1H").as_bytes());
@@ -111,7 +92,6 @@ impl Screen {
     }
 }
 
-/// Split off the longest valid UTF-8 prefix; invalid bytes become U+FFFD.
 fn take_utf8(buf: &mut Vec<u8>) -> String {
     let mut out = String::new();
     let mut rest: &[u8] = buf;
@@ -130,7 +110,6 @@ fn take_utf8(buf: &mut Vec<u8>) -> String {
                         out.push('\u{FFFD}');
                         rest = &bad[n..];
                     }
-                    // An incomplete character at the end: wait for the rest.
                     None => {
                         rest = bad;
                         break;
@@ -167,8 +146,6 @@ mod tests {
         assert!(s.text().starts_with("hello"));
     }
 
-    /// Replaying a snapshot into a fresh screen must give the same screen and
-    /// the same history.
     #[test]
     fn a_snapshot_reproduces_screen_and_scrollback() {
         for lines in [3usize, 4, 5, 12, 40] {

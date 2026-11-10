@@ -1,7 +1,3 @@
-//! The heart of the server: the model, the running panes, and every change to
-//! either. Clients send [`Op`]s; everything they need to know comes back as a
-//! reply or a broadcast [`Event`].
-
 use std::collections::{BTreeMap, HashMap};
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex, MutexGuard, Weak};
@@ -24,23 +20,17 @@ use crate::screen::{Screen, DEFAULT_COLS, DEFAULT_ROWS};
 use crate::transcripts::{self, Transcript};
 
 pub struct Config {
-    /// Where `state.json` lives.
     pub data_dir: PathBuf,
-    /// Environment panes are started from.
     pub env: BTreeMap<String, String>,
-    /// Claude Code's config dir, to check whether a conversation can be resumed.
     pub claude_dir: Option<PathBuf>,
-    /// The Electron app's `sessions.json`, imported on first run.
     pub legacy_sessions: Option<PathBuf>,
 }
 
 struct Runtime {
     screen: Screen,
     process: Option<PtyProcess>,
-    /// Which start of the pane this is; callbacks from an older one are ignored.
     generation: u64,
     sniffer: Option<CloudIdSniffer>,
-    /// Output arrived since detection last looked.
     detect_dirty: bool,
 }
 
@@ -67,14 +57,11 @@ struct Start {
     notice: Option<String>,
 }
 
-/// Processes to drop once the lock is released. Closing a pseudo-console can
-/// wait for its reader, and the reader needs the lock.
 type Graveyard = Vec<PtyProcess>;
 
 const CURSOR_QUERY: &str = "\x1b[6n";
 const SAVE_EVERY: Duration = Duration::from_millis(500);
 
-/// Remote panes and where their tmux session lives: `(ssh target, session name)`.
 fn remote_sessions(state: &State) -> HashMap<PaneId, (String, String)> {
     state
         .panes
@@ -87,7 +74,6 @@ fn remote_sessions(state: &State) -> HashMap<PaneId, (String, String)> {
         .collect()
 }
 
-/// The host part of an ssh target, as a first name for the machine.
 fn default_machine_label(target: &str) -> String {
     let rest = target.strip_prefix("ssh://").unwrap_or(target);
     let rest = rest.rsplit('@').next().unwrap_or(rest);
@@ -132,7 +118,6 @@ impl Hub {
     }
 
     fn lock(&self) -> MutexGuard<'_, Inner> {
-        // A panic while holding the lock must not take every pane down with it.
         self.inner.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
     }
 
@@ -153,10 +138,7 @@ impl Hub {
         self.emit(Event::State { state: inner.state.clone() });
     }
 
-    /// Run one client request.
     pub fn handle(self: &Arc<Self>, op: Op) -> Result<Reply, String> {
-        // Anything that touches the disk, the network or another program runs
-        // without the lock, so a slow folder cannot freeze every terminal.
         let op = match self.handle_unlocked(op)? {
             Ok(reply) => return Ok(reply),
             Err(op) => op,
@@ -174,7 +156,6 @@ impl Hub {
         self.lock().state.workspaces.iter().map(|w| w.cwd.clone()).collect()
     }
 
-    /// `Ok(Err(op))` hands back an op that is not handled here.
     fn handle_unlocked(&self, op: Op) -> Result<Result<Reply, Op>, String> {
         let forwards = |forwards: Vec<nmux_proto::Forward>| {
             self.emit(Event::Forwards { forwards: forwards.clone() });
@@ -199,7 +180,6 @@ impl Hub {
                     inner.state.panes.get(&pane).and_then(|p| p.machine).and_then(|m| inner.state.machine(m)).map(|m| m.target.clone())
                 };
                 let text = match target {
-                    // The agent runs over there, so the file has to be there too.
                     Some(target) => {
                         let bytes = std::fs::read(&path).map_err(|e| e.to_string())?;
                         let name = path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
@@ -210,7 +190,6 @@ impl Hub {
                 let inner = self.lock();
                 if let Some(rt) = inner.runtimes.get(&pane) {
                     if let Some(process) = &rt.process {
-                        // As a paste, so the agent sees one path and not keystrokes.
                         if rt.screen.bracketed_paste() {
                             process.write(format!("\x1b[200~{text}\x1b[201~").as_bytes());
                         } else {
@@ -229,6 +208,14 @@ impl Hub {
                     .collect();
                 Reply::Ports { ports: ports::listening(&roots) }
             }
+            Op::ListMachinePorts { machine } => {
+                let target = self.lock().state.machine(machine).ok_or("no such machine")?.target.clone();
+                let ports = remote::listening(&target, &self.config.env)?
+                    .into_iter()
+                    .map(|(address, port, process)| nmux_proto::ListeningPort { port, address, pid: 0, process, pane: None })
+                    .collect();
+                Reply::Ports { ports }
+            }
             Op::ListForwards => Reply::Forwards { forwards: self.forwards.list() },
             Op::StartForward { host, remote_port, local_port } => forwards(self.forwards.start(host.trim(), remote_port, local_port)?),
             Op::StopForward { id } => forwards(self.forwards.stop(id)?),
@@ -244,7 +231,6 @@ impl Hub {
                 };
                 let found = remote::probe(&target, &self.config.env);
                 let mut inner = self.lock();
-                // The machine may have been removed, or pointed elsewhere, meanwhile.
                 if inner.state.machine(machine).is_some_and(|m| m.target == target)
                     && inner.state.set_machine_status(machine, found.status, found.detail, found.tmux, found.claude)
                 {
@@ -265,6 +251,7 @@ impl Hub {
             | Op::CheckPath { .. }
             | Op::PasteImage { .. }
             | Op::ListPorts
+            | Op::ListMachinePorts { .. }
             | Op::ListForwards
             | Op::StartForward { .. }
             | Op::StopForward { .. }
@@ -273,11 +260,8 @@ impl Hub {
             Op::GetState => Ok(Reply::State { state: inner.state.clone() }),
 
             Op::CreateWorkspace { name, cwd, pane, machine: Some(machine) } => {
-                // The folder is on another machine: it cannot be looked at from
-                // here, and ssh says so in the pane if it is not there.
                 let cwd = validate::remote_cwd(&cwd).map_err(|r| r.0)?;
                 let name = name.as_deref().map(validate::name).transpose().map_err(|r| r.0)?;
-                // A bare `~` would otherwise be the workspace's name.
                 let name = name.or_else(|| (cwd.trim_end_matches('/') == "~").then(|| "home".to_string()));
                 let spec = self.checked_spec(&pane, true)?;
                 let created = inner.state.create_remote_workspace(machine, name, cwd, spec, now_ms()).map_err(e)?;
@@ -297,7 +281,6 @@ impl Hub {
                 let target = validate::ssh_target(&target).map_err(|r| r.0)?;
                 let label = match label.as_deref().map(str::trim).filter(|l| !l.is_empty()) {
                     Some(label) => validate::name(label).map_err(|r| r.0)?,
-                    // Like `ssh://you@host:22` -> `host`.
                     None => default_machine_label(&target),
                 };
                 inner.state.add_machine(label, target).map_err(e)?;
@@ -421,8 +404,6 @@ impl Hub {
                 if !inner.state.panes.contains_key(&pane) {
                     return Err("no such pane".into());
                 }
-                // A pane that has not been started yet still has a size: the
-                // window shows it, and its program must start at that size.
                 let generation = inner.generation;
                 let rt = inner.runtimes.entry(pane).or_insert_with(|| Runtime {
                     screen: Screen::default(),
@@ -442,7 +423,6 @@ impl Hub {
             Op::SetWindowVisible { visible } => {
                 inner.window_visible = visible;
                 if visible {
-                    // Whatever finished in the tab on screen has now been seen.
                     let in_view: Vec<PaneId> =
                         inner.state.panes.keys().copied().filter(|p| inner.state.is_in_view(*p)).collect();
                     let mut any = false;
@@ -496,7 +476,6 @@ impl Hub {
         Ok(spec)
     }
 
-    /// A pane was just added to the model: give it its ids and start it.
     fn started(self: &Arc<Self>, inner: &mut Inner, created: Created) -> Reply {
         let teleport = inner.state.panes.get_mut(&created.pane).and_then(|pane| {
             if pane.kind == PaneKind::Claude {
@@ -516,8 +495,6 @@ impl Hub {
         far: HashMap<PaneId, (String, String)>,
         graveyard: &mut Graveyard,
     ) -> Reply {
-        // Closing a pane ends its program. On another machine that program
-        // lives in tmux, which the dying ssh would leave running for ever.
         let mut by_target: HashMap<String, Vec<String>> = HashMap::new();
         for pane in &closed.panes {
             if let Some((target, session)) = far.get(pane) {
@@ -536,11 +513,6 @@ impl Hub {
         Reply::Closed { closed }
     }
 
-    /// Resume a Claude conversation, re-run a cloud launcher, or start a new shell.
-    ///
-    /// `claude --resume` exits with "No conversation found" when the transcript
-    /// has no messages, so that case starts a fresh conversation instead of
-    /// dying with a blank screen.
     fn restart(self: &Arc<Self>, inner: &mut Inner, id: PaneId, graveyard: &mut Graveyard) -> Result<(), String> {
         let pane = inner.state.panes.get_mut(&id).ok_or("no such pane")?;
         if pane.status == PaneStatus::Running {
@@ -548,8 +520,6 @@ impl Hub {
         }
         let mut start = Start { resume: pane.kind == PaneKind::Claude, teleport: None, notice: None };
         match pane.kind {
-            // On another machine the transcripts cannot be read from here: the
-            // far side resumes, and starts afresh itself if there is nothing.
             PaneKind::Claude if pane.machine.is_some() => {
                 if pane.claude_session_id.is_none() {
                     pane.claude_session_id = Some(uuid::Uuid::new_v4().to_string());
@@ -564,13 +534,9 @@ impl Hub {
                 };
                 if matches!(transcript, Transcript::Missing | Transcript::Empty) {
                     start.resume = false;
-                    // Claude refuses `--session-id` for an id that already has a
-                    // file, even one without messages, so that needs a new id.
                     if transcript == Transcript::Empty || pane.claude_session_id.is_none() {
                         pane.claude_session_id = Some(uuid::Uuid::new_v4().to_string());
                     }
-                    // A teleported conversation is only saved locally once you
-                    // send something; until then, bring it in from the cloud again.
                     start.teleport = pane.teleported_from.clone();
                     if start.teleport.is_none() {
                         start.notice =
@@ -609,7 +575,6 @@ impl Hub {
                     _ => remote::Program::Shell,
                 };
                 let session = remote::tmux_session(id, pane.created_at);
-                // A machine that was removed leaves nothing to connect to; ssh reports it.
                 remote::launch(target.as_deref().unwrap_or("removed-machine.invalid"), &remote::script(&pane.cwd, &session, &program), &env)
             }
             (None, PaneKind::Claude) => launch::claude(
@@ -626,7 +591,6 @@ impl Hub {
             (None, PaneKind::Shell) => launch::shell(&env),
         };
         let kind = pane.kind;
-        // The folder of a remote pane is not on this disk; ssh starts from the data folder.
         let cwd = if far.is_some() { self.config.data_dir.to_string_lossy().into_owned() } else { pane.cwd.clone() };
 
         inner.generation += 1;
@@ -641,7 +605,6 @@ impl Hub {
         rt.generation = generation;
         rt.sniffer = (kind == PaneKind::Cloud).then(CloudIdSniffer::default);
         rt.screen.title = None;
-        // A restart begins on a clean terminal, here and in every attached window.
         if rt.screen.seq > 0 {
             self.print(id, rt, "\x1bc");
         }
@@ -678,7 +641,6 @@ impl Hub {
         }
     }
 
-    /// Put text on a pane's screen as if the pane had printed it.
     fn print(&self, id: PaneId, rt: &mut Runtime, text: &str) {
         let data = rt.screen.feed(text.as_bytes());
         self.emit(Event::Output { pane: id, seq: rt.screen.seq, data });
@@ -693,10 +655,6 @@ impl Hub {
         }
         let mut data = rt.screen.feed(bytes);
         rt.detect_dirty = true;
-        // ConPTY asks where the cursor is when it starts and waits for the
-        // answer. A terminal would reply, but a pane has to start with no
-        // window attached, so the server answers and keeps the question to
-        // itself (otherwise an attached terminal would answer a second time).
         if data.contains(CURSOR_QUERY) {
             let (row, col) = rt.screen.cursor();
             if let Some(process) = &rt.process {
@@ -737,7 +695,6 @@ impl Hub {
         drop(process);
     }
 
-    /// Periodic work: read agent states off the screens, and save.
     pub fn tick(&self) {
         let to_save = {
             let mut inner = self.lock();

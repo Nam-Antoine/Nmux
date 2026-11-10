@@ -1,8 +1,3 @@
-//! Send one request to a running nmux-server and print the reply.
-//!
-//!   nmux-ctl '{"op":"getState"}'
-//!   nmux-ctl --data-dir D '{"op":"createTab","workspace":3,"pane":{"kind":"shell"}}'
-
 use std::path::PathBuf;
 
 use nmux_proto::Op;

@@ -1,24 +1,14 @@
-//! Messages between `nmux-server` and a client (the desktop window, or a test).
-//!
-//! Framing: a 4-byte big-endian length, then that many bytes of JSON. JSON
-//! keeps the protocol readable in a log and trivial to speak from another
-//! language; terminal output dominates the traffic and is text already.
-
 use nmux_core::{Closed, Created, Dir, MachineId, PaneId, PaneSpec, Side, State, TabId, WorkspaceId};
 use serde::{Deserialize, Serialize};
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 
-/// Bumped when a client and server can no longer talk to each other.
 pub const PROTOCOL_VERSION: u32 = 1;
 
-/// Largest frame either side will read. A snapshot of a full scrollback fits
-/// comfortably; anything bigger is a bug or an attack.
 pub const MAX_FRAME: usize = 16 * 1024 * 1024;
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Request {
-    /// Echoed in the matching [`ServerMessage::Reply`].
     pub id: u64,
     #[serde(flatten)]
     pub op: Op,
@@ -27,7 +17,6 @@ pub struct Request {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "op", rename_all = "camelCase")]
 pub enum Op {
-    /// Must be the first request. The token is in a file only this user can read.
     #[serde(rename_all = "camelCase")]
     Hello { token: String, protocol: u32 },
     GetState,
@@ -37,18 +26,14 @@ pub enum Op {
         name: Option<String>,
         cwd: String,
         pane: PaneSpec,
-        /// The folder is on this saved machine, not on this computer.
         #[serde(default)]
         machine: Option<MachineId>,
     },
 
-    /// Save another computer, reached with `ssh <target>`.
     #[serde(rename_all = "camelCase")]
     AddMachine { label: Option<String>, target: String },
     RenameMachine { machine: MachineId, label: String },
-    /// Forget a machine. Nothing is stopped on it.
     RemoveMachine { machine: MachineId },
-    /// Try to connect, without prompting, and report what is there.
     CheckMachine { machine: MachineId },
     #[serde(rename_all = "camelCase")]
     CreateTab { workspace: WorkspaceId, name: Option<String>, pane: PaneSpec },
@@ -72,37 +57,27 @@ pub enum Op {
     RenameTab { tab: TabId, name: Option<String> },
     RenameWorkspace { workspace: WorkspaceId, name: String },
 
-    /// Start an exited pane again (resume the conversation, or a new shell).
     RestartPane { pane: PaneId },
-    /// Bring a cloud session into a new local Claude pane next to its launcher.
     TeleportPane { pane: PaneId },
 
-    /// Current screen and scrollback of a pane, to paint a terminal from.
     Attach { pane: PaneId },
     Write { pane: PaneId, data: String },
     Resize { pane: PaneId, cols: u16, rows: u16 },
 
-    /// Entries of a folder inside a workspace.
     ListDir { path: String },
-    /// A preview of a file inside a workspace.
     ReadFile { path: String },
-    /// Resolve a path and confirm it is inside a workspace (before opening it).
     CheckPath { path: String },
-    /// Save a pasted image to a private file and type its path into the pane.
     PasteImage { pane: PaneId, extension: String, data: String },
 
-    /// TCP ports being listened on, with the pane that owns each when there is one.
     ListPorts,
+    ListMachinePorts { machine: MachineId },
     ListForwards,
-    /// `ssh -L`: make `remote_port` on `host` reachable as a local port.
     #[serde(rename_all = "camelCase")]
     StartForward { host: String, remote_port: u16, local_port: Option<u16> },
     StopForward { id: u32 },
     RemoveForward { id: u32 },
 
-    /// Whether the window is on screen; decides if a finished agent counts as seen.
     SetWindowVisible { visible: bool },
-    /// Stop every pane and exit.
     Shutdown,
 }
 
@@ -162,9 +137,7 @@ pub struct FilePreview {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "camelCase")]
 pub enum FileContent {
-    /// `truncated` when only the start of a long file is included.
     Text { text: String, truncated: bool },
-    /// Base64 image bytes.
     Image { mime: String, data: String },
     Binary,
     TooLarge,
@@ -177,7 +150,6 @@ pub struct ListeningPort {
     pub address: String,
     pub pid: u32,
     pub process: String,
-    /// The pane whose process tree is listening, if any.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub pane: Option<PaneId>,
 }
@@ -199,18 +171,14 @@ pub struct Forward {
     pub remote_port: u16,
     pub local_port: u16,
     pub state: ForwardState,
-    /// Why it failed, in ssh's words.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
 }
 
-/// What a terminal needs to show a pane as it is right now.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Snapshot {
-    /// Escape sequences that redraw scrollback and screen.
     pub data: String,
-    /// Output events with a `seq` at or below this are already in `data`.
     pub seq: u64,
     pub cols: u16,
     pub rows: u16,
@@ -219,10 +187,8 @@ pub struct Snapshot {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "event", rename_all = "camelCase")]
 pub enum Event {
-    /// The whole model, sent after every change. It is small.
     State { state: State },
     Output { pane: PaneId, seq: u64, data: String },
-    /// A pane's agent finished or needs an answer while out of sight.
     Attention { pane: PaneId, blocked: bool },
     Forwards { forwards: Vec<Forward> },
 }
@@ -241,7 +207,6 @@ where
     writer.flush().await
 }
 
-/// `Ok(None)` is a clean end of stream between frames.
 pub async fn read_frame<R, T>(reader: &mut R) -> std::io::Result<Option<T>>
 where
     R: AsyncRead + Unpin,

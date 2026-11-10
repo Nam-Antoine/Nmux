@@ -148,7 +148,6 @@ function AddMachine(): React.JSX.Element {
     setBusy(false)
     if (!reply) return
     update({ dialog: null })
-    // Try it at once, so the sidebar says whether it can be reached.
     window.setTimeout(() => {
       const added = getStore().state.machines.find((m) => !before.has(m.id))
       if (added) void run({ op: 'checkMachine', machine: added.id })

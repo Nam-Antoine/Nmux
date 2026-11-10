@@ -1,6 +1,3 @@
-// One xterm per pane, kept alive outside React so switching tabs or
-// workspaces never tears a terminal down: its element is simply moved to
-// wherever the pane is shown.
 import { Terminal } from '@xterm/xterm'
 import { FitAddon } from '@xterm/addon-fit'
 import { Unicode11Addon } from '@xterm/addon-unicode11'
@@ -12,7 +9,7 @@ import { handleKey } from './keys'
 import { toast } from './store'
 import type { Pane, PaneId } from './types'
 
-export const terminalTheme = {
+const terminalTheme = {
   background: '#17191d',
   foreground: '#d7dae0',
   cursor: '#d7dae0',
@@ -40,14 +37,10 @@ interface Entry {
   term: Terminal
   fit: FitAddon
   host: HTMLDivElement
-  /** Size last sent to the server, to skip redundant resizes. */
   sent: { cols: number; rows: number }
-  /** False while a snapshot is being fetched; output is queued meanwhile. */
   ready: boolean
   pending: Array<[number, string]>
-  /** Output at or below this seq is already on screen. */
   seq: number
-  /** Bumped on every attach so a slow, superseded one is ignored. */
   attachId: number
   observer: ResizeObserver
 }
@@ -90,21 +83,15 @@ function create(pane: PaneId): Entry {
     if (ev.type !== 'keydown') return true
     if (handleKey(ev)) return false
     const key = ev.key.toLowerCase()
-    // Copy: Ctrl+Shift+C always, Ctrl+C only with a selection (otherwise it
-    // must reach the process as an interrupt).
     if (ev.ctrlKey && key === 'c' && (ev.shiftKey || term.hasSelection())) {
       void navigator.clipboard.writeText(term.getSelection())
       term.clearSelection()
       return false
     }
-    // Paste: let the browser fire a paste event on xterm's textarea.
     if (ev.ctrlKey && key === 'v') return false
     return true
   })
   term.onData((data) => send({ op: 'write', pane, data }))
-  // A copied image has no text for the terminal to paste. Hand it to the
-  // server, which saves it and types the file's path into the pane; agents
-  // take an image that way.
   host.addEventListener(
     'paste',
     (ev) => {
@@ -150,7 +137,6 @@ async function attach(pane: PaneId, entry: Entry): Promise<void> {
     if (id !== entry.attachId || reply.kind !== 'attached') return
     const { snapshot } = reply
     entry.term.reset()
-    // Draw the snapshot at the size it was taken, then fit to the pane.
     entry.term.resize(snapshot.cols, snapshot.rows)
     entry.term.write(snapshot.data)
     entry.seq = snapshot.seq
@@ -167,7 +153,6 @@ async function attach(pane: PaneId, entry: Entry): Promise<void> {
 }
 
 export const terminals = {
-  /** Show a pane's terminal inside `container`, creating it on first use. */
   mount(pane: PaneId, container: HTMLElement): void {
     let entry = entries.get(pane)
     const fresh = !entry
@@ -180,7 +165,6 @@ export const terminals = {
         webgl.onContextLoss(() => webgl.dispose())
         entry.term.loadAddon(webgl)
       } catch {
-        // The DOM renderer is fine.
       }
       entry.observer.observe(entry.host)
       void attach(pane, entry)
@@ -189,20 +173,17 @@ export const terminals = {
     }
   },
 
-  /** Take a pane's terminal off the page without destroying it. */
   unmount(pane: PaneId, container: HTMLElement): void {
     const entry = entries.get(pane)
     if (entry && entry.host.parentElement === container) container.removeChild(entry.host)
   },
 
-  /** Paste text as the terminal would, marked as a paste when the program asked for that. */
   paste(pane: PaneId, text: string): void {
     const entry = entries.get(pane)
     if (entry) entry.term.paste(text)
     else send({ op: 'write', pane, data: text })
   },
 
-  /** Send the size again: a program that has just started must learn it. */
   resync(pane: PaneId): void {
     const entry = entries.get(pane)
     if (!entry) return
@@ -221,7 +202,6 @@ export const terminals = {
     else if (seq > entry.seq) entry.term.write(data)
   },
 
-  /** Drop terminals whose pane no longer exists. */
   retain(panes: Map<PaneId, Pane>): void {
     for (const [id, entry] of entries) {
       if (panes.has(id)) continue
@@ -232,7 +212,6 @@ export const terminals = {
     }
   },
 
-  /** After a reconnect every screen may be stale: repaint from snapshots. */
   reattachAll(): void {
     for (const [id, entry] of entries) void attach(id, entry)
   }

@@ -1,9 +1,3 @@
-//! Listening ports on this machine, and SSH port forwards to others.
-//!
-//! A dev server started in a pane shows up here with its pane, so it can be
-//! opened in a browser. A forward runs `ssh -N -L`, which makes a port on a
-//! remote machine reachable as `localhost:<port>` here.
-
 use std::collections::HashMap;
 use std::io::{BufRead, BufReader};
 use std::path::Path;
@@ -25,8 +19,6 @@ fn quiet(command: &mut Command) -> &mut Command {
     command.stdin(Stdio::null())
 }
 
-/// `ss -Hltnp` lines look like
-/// `LISTEN 0 511 127.0.0.1:5173 0.0.0.0:* users:(("node",pid=1234,fd=20))`.
 pub fn parse_ss(text: &str) -> Vec<(String, u16, u32)> {
     let mut out = Vec::new();
     for line in text.lines() {
@@ -50,8 +42,6 @@ fn raw_listeners() -> Vec<(String, u16, u32)> {
     }
 }
 
-/// Asks Windows directly. `netstat` would be simpler to read, but its state
-/// column is not dependable across Windows builds.
 #[cfg(windows)]
 fn raw_listeners() -> Vec<(String, u16, u32)> {
     use std::net::{Ipv4Addr, Ipv6Addr};
@@ -62,12 +52,10 @@ fn raw_listeners() -> Vec<(String, u16, u32)> {
     const AF_INET6: u32 = 23;
     const ERROR_INSUFFICIENT_BUFFER: u32 = 122;
 
-    /// The raw table for one address family: a u32 row count, then the rows.
     fn table(family: u32) -> Vec<u8> {
         let mut size: u32 = 0;
         for _ in 0..4 {
             let mut buffer = vec![0u8; size as usize];
-            // SAFETY: `buffer` is `size` bytes long and both stay alive for the call.
             let status = unsafe {
                 GetExtendedTcpTable(buffer.as_mut_ptr().cast(), &mut size, 0, family, TCP_TABLE_OWNER_PID_LISTENER, 0)
             };
@@ -81,18 +69,14 @@ fn raw_listeners() -> Vec<(String, u16, u32)> {
         Vec::new()
     }
 
-    /// Rows of type `T` that fit entirely inside the buffer.
     fn rows<T: Copy>(buffer: &[u8]) -> Vec<T> {
         let Some(count) = buffer.get(..4).map(|b| u32::from_ne_bytes([b[0], b[1], b[2], b[3]]) as usize) else {
             return Vec::new();
         };
         let width = std::mem::size_of::<T>();
-        // Rows start after the count, padded to the row alignment.
         let start = std::mem::align_of::<T>().max(4);
         (0..count)
             .map_while(|i| buffer.get(start + i * width..start + (i + 1) * width))
-            // SAFETY: the slice is exactly `size_of::<T>()` bytes, `T` is plain
-            // old data, and the read does not require alignment.
             .map(|bytes| unsafe { std::ptr::read_unaligned(bytes.as_ptr().cast::<T>()) })
             .collect()
     }
@@ -109,7 +93,6 @@ fn raw_listeners() -> Vec<(String, u16, u32)> {
     out
 }
 
-/// Which pane a process belongs to: walk up its parents until one is a pane's root process.
 pub fn owning_pane(pid: u32, parents: &HashMap<u32, u32>, pane_roots: &HashMap<u32, PaneId>) -> Option<PaneId> {
     let mut current = pid;
     for _ in 0..64 {
@@ -124,7 +107,6 @@ pub fn owning_pane(pid: u32, parents: &HashMap<u32, u32>, pane_roots: &HashMap<u
     None
 }
 
-/// Every listening TCP port, panes' own first.
 pub fn listening(pane_roots: &HashMap<u32, PaneId>) -> Vec<ListeningPort> {
     let raw = raw_listeners();
     let mut system = sysinfo::System::new();
@@ -140,7 +122,6 @@ pub fn listening(pane_roots: &HashMap<u32, PaneId>) -> Vec<ListeningPort> {
 
     let mut ports: Vec<ListeningPort> = Vec::new();
     for (address, port, pid) in raw {
-        // IPv4 and IPv6 listeners on one port are one thing to a person.
         if ports.iter().any(|p| p.port == port && p.pid == pid) {
             continue;
         }
@@ -156,13 +137,8 @@ pub fn listening(pane_roots: &HashMap<u32, PaneId>) -> Vec<ListeningPort> {
     ports
 }
 
-/// An SSH destination as typed after `ssh`: an alias from `~/.ssh/config`, or
-/// `user@host`. It becomes one argument; it must not look like an option.
 pub fn valid_host(host: &str) -> bool {
-    !host.is_empty()
-        && host.len() <= 255
-        && !host.starts_with('-')
-        && host.chars().all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '-' | '@' | ':' | '[' | ']'))
+    host.trim() == host && nmux_core::validate::ssh_target(host).is_ok()
 }
 
 #[derive(Serialize, Deserialize)]
@@ -175,7 +151,6 @@ struct SavedForward {
 struct Entry {
     info: Forward,
     child: Option<Child>,
-    /// Which start of this forward a watcher thread belongs to.
     run: u64,
 }
 
@@ -200,12 +175,9 @@ impl Table {
     }
 }
 
-/// How long ssh must stay up before a forward is called active. It exits
-/// within milliseconds when the local port cannot be bound.
 const GRACE: Duration = Duration::from_millis(900);
 
 impl Forwards {
-    /// Saved forwards come back stopped; nothing connects until asked.
     pub fn load(data_dir: &Path, notify: Notify) -> Forwards {
         let file = data_dir.join("forwards.json");
         let saved: Vec<SavedForward> =
@@ -244,7 +216,6 @@ impl Forwards {
         }
     }
 
-    /// Start a forward, reusing a saved one with the same host and ports.
     pub fn start(&self, host: &str, remote_port: u16, local_port: Option<u16>) -> Result<Vec<Forward>, String> {
         if !valid_host(host) {
             return Err("that does not look like an SSH host".into());
@@ -275,16 +246,10 @@ impl Forwards {
         let mut command = Command::new("ssh");
         quiet(&mut command)
             .arg("-N")
-            // Its own connection: under a shared ControlMaster `ssh -N -L` hands
-            // the forward to the master and exits at once.
             .args(["-o", "ControlPath=none"])
-            // Without this ssh stays up when the local port could not be bound,
-            // and the "forward" silently points at whatever owns that port.
             .args(["-o", "ExitOnForwardFailure=yes"])
-            // There is no terminal to answer a password prompt on.
             .args(["-o", "BatchMode=yes"])
             .args(["-o", "ServerAliveInterval=30"])
-            // Bound to loopback, so the remote port is not offered to the LAN.
             .arg("-L")
             .arg(format!("127.0.0.1:{local_port}:localhost:{remote_port}"))
             .arg("--")
@@ -306,7 +271,6 @@ impl Forwards {
         let list = table.list();
         drop(table);
 
-        // Still running after the grace period: it is up.
         let (inner, notify) = (self.inner.clone(), self.notify.clone());
         std::thread::spawn(move || {
             std::thread::sleep(GRACE);
@@ -321,7 +285,6 @@ impl Forwards {
             }
         });
 
-        // ssh's stderr closes when it exits; its last line is the reason.
         let (inner, notify) = (self.inner.clone(), self.notify.clone());
         std::thread::spawn(move || {
             let mut last = String::new();
@@ -337,7 +300,6 @@ impl Forwards {
             if let Some(mut child) = entry.child.take() {
                 let _ = child.wait();
             }
-            // A deliberate stop has already set the state.
             if entry.info.state != ForwardState::Stopped {
                 entry.info.state = ForwardState::Failed;
                 entry.info.error = Some(if last.is_empty() { "ssh exited".to_string() } else { last });
@@ -432,10 +394,8 @@ mod tests {
         assert!(forwards.start("-bad", 80, None).is_err());
         assert!(forwards.start("ok", 0, None).is_err());
 
-        // A host name that cannot resolve: ssh exits with an error.
         let list = match forwards.start("nmux-test.invalid", 8080, None) {
             Ok(list) => list,
-            // No ssh on this machine: nothing more to check.
             Err(_) => return,
         };
         assert_eq!((list[0].local_port, list[0].state), (8080, ForwardState::Starting));
@@ -447,7 +407,6 @@ mod tests {
         };
         assert!(failed[0].error.as_deref().is_some_and(|e| !e.is_empty()));
 
-        // It comes back, stopped, in a new server.
         let again = Forwards::load(dir.path(), notify);
         let list = again.list();
         assert_eq!((list.len(), list[0].state, list[0].host.as_str()), (1, ForwardState::Stopped, "nmux-test.invalid"));

@@ -1,11 +1,6 @@
-//! Accepts clients on a local endpoint: a named pipe on Windows, a Unix
-//! socket elsewhere. Nothing listens on the network.
-//!
-//! A client proves it is the same user by sending a token that the server
-//! wrote to a file in its data directory, which only that user can read.
-
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use std::time::{Duration, Instant};
 
 use nmux_proto::{read_frame, write_frame, Event, Op, Reply, ReplyResult, Request, ServerMessage, PROTOCOL_VERSION};
 use serde::{Deserialize, Serialize};
@@ -14,10 +9,8 @@ use tokio::sync::{broadcast, mpsc};
 
 use crate::hub::Hub;
 
-/// Where the server can be reached; written next to `state.json`.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Endpoint {
-    /// Pipe name or socket path.
     pub address: String,
     pub token: String,
     pub pid: u32,
@@ -33,7 +26,6 @@ pub fn read_endpoint(data_dir: &Path) -> Option<Endpoint> {
 
 fn address_for(data_dir: &Path) -> String {
     if cfg!(windows) {
-        // One pipe per data directory, so a test server never collides with the real one.
         use std::hash::{Hash, Hasher};
         let mut hasher = std::collections::hash_map::DefaultHasher::new();
         data_dir.to_string_lossy().to_lowercase().hash(&mut hasher);
@@ -63,13 +55,10 @@ fn write_private(path: &Path, body: &[u8]) -> std::io::Result<()> {
     }
     #[cfg(not(unix))]
     {
-        // %APPDATA% is readable by its owner (and administrators) only.
         std::fs::write(path, body)
     }
 }
 
-/// Listen until the hub is told to shut down. Fails straight away if another
-/// server already owns this data directory.
 pub async fn run(hub: Arc<Hub>, data_dir: &Path) -> anyhow::Result<()> {
     std::fs::create_dir_all(data_dir)?;
     let endpoint = Endpoint { address: address_for(data_dir), token: new_token()?, pid: std::process::id() };
@@ -82,7 +71,6 @@ pub async fn run(hub: Arc<Hub>, data_dir: &Path) -> anyhow::Result<()> {
         _ = stop.wait_for(|stopping| *stopping) => Ok(()),
     };
     let _ = std::fs::remove_file(endpoint_file(data_dir));
-    // Let the reply to the shutdown request reach its client before the runtime goes away.
     tokio::time::sleep(std::time::Duration::from_millis(150)).await;
     result
 }
@@ -97,9 +85,6 @@ struct Listener {
 impl Listener {
     fn bind(address: &str) -> anyhow::Result<Listener> {
         use tokio::net::windows::named_pipe::ServerOptions;
-        // `first_pipe_instance` makes this fail if the name is already served,
-        // which is both the single-instance check and a guard against a
-        // squatter that created the pipe first.
         let first = ServerOptions::new()
             .first_pipe_instance(true)
             .reject_remote_clients(true)
@@ -146,8 +131,23 @@ impl Listener {
     }
 }
 
-/// How many messages may queue for one client before it is dropped. A window
-/// that cannot keep up reconnects and repaints from a snapshot.
+const OUTPUT_FRAME: Duration = Duration::from_millis(6);
+const OUTPUT_MERGE_BYTES: usize = 256 * 1024;
+
+fn may_wait(op: &Op) -> bool {
+    matches!(
+        op,
+        Op::CheckMachine { .. }
+            | Op::ListMachinePorts { .. }
+            | Op::ListPorts
+            | Op::ListDir { .. }
+            | Op::ReadFile { .. }
+            | Op::CheckPath { .. }
+            | Op::PasteImage { .. }
+            | Op::StartForward { .. }
+    )
+}
+
 const CLIENT_QUEUE: usize = 4096;
 
 async fn serve_client<S>(hub: Arc<Hub>, stream: S, token: String)
@@ -156,7 +156,6 @@ where
 {
     let (mut reader, mut writer) = tokio::io::split(stream);
 
-    // Nothing is served, and no event is sent, before a valid hello.
     let hello: Option<Request> = read_frame(&mut reader).await.ok().flatten();
     let Some(Request { id, op: Op::Hello { token: given, protocol } }) = hello else { return };
     let verdict = if !same_token(&given, &token) {
@@ -171,7 +170,6 @@ where
         })
     };
     let accepted = verdict.is_ok();
-    // Subscribe before replying so the client misses nothing after its hello.
     let mut events = hub.subscribe();
     let reply = ServerMessage::Reply { id, result: verdict.map_or_else(ReplyResult::Err, ReplyResult::Ok) };
     if write_frame(&mut writer, &reply).await.is_err() || !accepted {
@@ -189,15 +187,41 @@ where
 
     let event_tx = tx.clone();
     let event_task = tokio::spawn(async move {
-        loop {
-            match events.recv().await {
-                Ok(event) => {
-                    let event: Event = (*event).clone();
-                    if event_tx.try_send(ServerMessage::Event(event)).is_err() {
-                        break;
+        let mut held: Option<Arc<Event>> = None;
+        let mut last_output: Option<Instant> = None;
+        'events: loop {
+            let arc = match held.take() {
+                Some(event) => event,
+                None => match events.recv().await {
+                    Ok(event) => event,
+                    Err(_) => break,
+                },
+            };
+            let mut event: Event = (*arc).clone();
+            if let Event::Output { pane, seq, data } = &mut event {
+                if let Some(wait) = last_output.and_then(|at| OUTPUT_FRAME.checked_sub(at.elapsed())) {
+                    tokio::time::sleep(wait).await;
+                }
+                while data.len() < OUTPUT_MERGE_BYTES {
+                    match events.try_recv() {
+                        Ok(more) => match &*more {
+                            Event::Output { pane: p, seq: s, data: d } if p == pane => {
+                                data.push_str(d);
+                                *seq = *s;
+                            }
+                            _ => {
+                                held = Some(more);
+                                break;
+                            }
+                        },
+                        Err(broadcast::error::TryRecvError::Empty) => break,
+                        Err(_) => break 'events,
                     }
                 }
-                Err(broadcast::error::RecvError::Lagged(_)) | Err(broadcast::error::RecvError::Closed) => break,
+                last_output = Some(Instant::now());
+            }
+            if event_tx.try_send(ServerMessage::Event(event)).is_err() {
+                break;
             }
         }
     });
@@ -208,20 +232,23 @@ where
             frame = read_frame::<_, Request>(&mut reader) => {
                 let Ok(Some(request)) = frame else { break };
                 let hub = hub.clone();
-                // Starting a process blocks for a moment; keep it off the async workers.
-                let result = tokio::task::spawn_blocking(move || hub.handle(request.op)).await;
-                let result = match result {
-                    Ok(r) => r,
-                    Err(_) => Err("internal error".to_string()),
+                let waits = may_wait(&request.op);
+                let id = request.id;
+                let work = tokio::task::spawn_blocking(move || hub.handle(request.op));
+                let answer = move |result: Result<Result<Reply, String>, tokio::task::JoinError>| {
+                    let result = result.unwrap_or_else(|_| Err("internal error".to_string()));
+                    ServerMessage::Reply { id, result: result.map_or_else(ReplyResult::Err, ReplyResult::Ok) }
                 };
-                let reply = ServerMessage::Reply { id: request.id, result: result.map_or_else(ReplyResult::Err, ReplyResult::Ok) };
-                if tx.send(reply).await.is_err() {
+                if waits {
+                    let tx = tx.clone();
+                    tokio::spawn(async move {
+                        let _ = tx.send(answer(work.await)).await;
+                    });
+                } else if tx.send(answer(work.await)).await.is_err() {
                     break;
                 }
             }
-            // The event side gave up (the client fell too far behind).
             _ = tx.closed() => break,
-            // Let go of the pipe so the next server can claim the name.
             _ = stop.changed() => break,
         }
         if event_task.is_finished() {

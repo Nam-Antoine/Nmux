@@ -1,8 +1,8 @@
 import { useCallback, useEffect, useState } from 'react'
 import { call, openLocalPort, openPath, revealPath } from '../api'
-import { activeTab, activeWorkspace, getStore, run, toast, update, useStore } from '../store'
+import { activeTab, activeWorkspace, getStore, run, toast, update, useStore, workspacePanes } from '../store'
 import { terminals } from '../terminals'
-import type { DirEntry, FilePreview, ListeningPort } from '../types'
+import type { DirEntry, FilePreview, Forward, ListeningPort, Machine } from '../types'
 import { Chevron, Close, FolderIcon, Plus, Refresh } from './icons'
 
 function join(dir: string, name: string): string {
@@ -16,15 +16,12 @@ function size(bytes: number): string {
   return `${(bytes / 1024 / 1024).toFixed(1)} MB`
 }
 
-/** Type a path into the focused pane, quoted when it has spaces. */
 function insertPath(path: string): void {
   const pane = activeTab(getStore())?.focused
   if (pane === undefined) return toast('No pane to insert into.')
   terminals.paste(pane, /\s/.test(path) ? `"${path}" ` : `${path} `)
   terminals.focus(pane)
 }
-
-// ---- files -----------------------------------------------------------------
 
 interface TreeProps {
   path: string
@@ -178,7 +175,137 @@ function Files(): React.JSX.Element {
   )
 }
 
-// ---- ports -----------------------------------------------------------------
+const validPort = (n: number | undefined): boolean => n !== undefined && Number.isInteger(n) && n > 0 && n < 65536
+
+function ForwardRow({ f, label }: { f: Forward; label?: string }): React.JSX.Element {
+  const up = f.state === 'active' || f.state === 'starting'
+  return (
+    <div className="forward">
+      <div className="port-row">
+        <span className={`dot ${f.state === 'active' ? 'working still' : f.state === 'starting' ? 'working' : f.state === 'failed' ? 'blocked' : 'exited'}`} title={f.state} />
+        <span className="port-what" title={`localhost:${f.localPort} → ${f.host}:${f.remotePort}`}>
+          <span className="port-num">{f.localPort}</span>
+          <span className="muted"> → </span>
+          {label ?? f.host}:{f.remotePort}
+        </span>
+        {f.state === 'active' && (
+          <button className="btn small-btn" onClick={() => openLocalPort(f.localPort)}>
+            Open
+          </button>
+        )}
+        {up ? (
+          <button className="btn small-btn" onClick={() => void run({ op: 'stopForward', id: f.id })}>
+            Stop
+          </button>
+        ) : (
+          <button className="btn small-btn" onClick={() => void run({ op: 'startForward', host: f.host, remotePort: f.remotePort, localPort: f.localPort })}>
+            Start
+          </button>
+        )}
+        <button className="icon-btn" title="Remove" onClick={() => void run({ op: 'removeForward', id: f.id })}>
+          <Close />
+        </button>
+      </div>
+      {f.state === 'failed' && f.error && <div className="forward-error">{f.error}</div>}
+    </div>
+  )
+}
+
+function MachinePorts({ machine }: { machine: Machine }): React.JSX.Element {
+  const all = useStore((s) => s.forwards)
+  const [ports, setPorts] = useState<ListeningPort[] | null>(null)
+  const [problem, setProblem] = useState<string | null>(null)
+  const [remote, setRemote] = useState('')
+  const [local, setLocal] = useState('')
+  const forwards = all.filter((f) => f.host === machine.target)
+
+  const refresh = useCallback(() => {
+    call({ op: 'listMachinePorts', machine: machine.id })
+      .then((reply) => {
+        if (reply.kind !== 'ports') return
+        setPorts(reply.ports)
+        setProblem(null)
+      })
+      .catch((err) => setProblem(String(err)))
+  }, [machine.id])
+  useEffect(() => {
+    refresh()
+    const timer = window.setInterval(() => !document.hidden && refresh(), 15_000)
+    return () => window.clearInterval(timer)
+  }, [refresh])
+
+  const remotePort = Number(remote)
+  const localPort = local.trim() === '' ? undefined : Number(local)
+  const ready = validPort(remotePort) && (localPort === undefined || validPort(localPort))
+  const forwardOf = (port: number): Forward | undefined => forwards.find((f) => f.remotePort === port)
+  const unlisted = forwards.filter((f) => !ports?.some((p) => p.port === f.remotePort))
+
+  return (
+    <div className="ports">
+      <div className="panel-section">
+        Listening on {machine.label}
+        <span className="grow" />
+        <button className="icon-btn" title="Look again" onClick={refresh}>
+          <Refresh />
+        </button>
+      </div>
+      {ports === null && !problem && <div className="tree-note">Connecting to {machine.label}…</div>}
+      {problem && <div className="tree-note">Could not look on {machine.label}: {problem}</div>}
+      {ports !== null && ports.length === 0 && <div className="tree-note">Nothing is listening there. Start a dev server in a pane and it shows up here.</div>}
+      {ports?.map((p) => {
+        const f = forwardOf(p.port)
+        return f ? (
+          <ForwardRow key={p.port} f={f} label={p.process || machine.label} />
+        ) : (
+          <div className="port-row" key={p.port}>
+            <span className="dot exited" title="Not forwarded" />
+            <span className="port-what" title={`${p.process || 'A program'} on ${p.address}:${p.port}`}>
+              <span className="port-num">{p.port}</span>
+              <span className="muted"> {p.process}</span>
+            </span>
+            <button
+              className="btn small-btn"
+              title={`Make ${machine.label}:${p.port} reachable as localhost:${p.port}`}
+              onClick={() => void run({ op: 'startForward', host: machine.target, remotePort: p.port })}
+            >
+              Forward
+            </button>
+          </div>
+        )
+      })}
+
+      {unlisted.length > 0 && <div className="panel-section">Other forwards to {machine.label}</div>}
+      {unlisted.map((f) => (
+        <ForwardRow key={f.id} f={f} label={machine.label} />
+      ))}
+
+      <form
+        className="forward-form"
+        onSubmit={(e) => {
+          e.preventDefault()
+          if (!ready) return
+          void run({ op: 'startForward', host: machine.target, remotePort, localPort }).then((reply) => {
+            if (reply) {
+              setRemote('')
+              setLocal('')
+            }
+          })
+        }}
+      >
+        <div className="row">
+          <input value={remote} onChange={(e) => setRemote(e.target.value)} placeholder={`port on ${machine.label}`} inputMode="numeric" />
+          <input value={local} onChange={(e) => setLocal(e.target.value)} placeholder="local port (same)" inputMode="numeric" />
+          <button className="btn" type="submit" disabled={!ready} title="Start forwarding">
+            <Plus /> Forward
+          </button>
+        </div>
+        <span className="muted small">
+          A forwarded port opens as localhost on this computer. Needs a key or agent for {machine.label}: there is nowhere to type a password here.
+        </span>
+      </form>
+    </div>
+  )
+}
 
 function Ports(): React.JSX.Element {
   const s = useStore((x) => x)
@@ -199,12 +326,14 @@ function Ports(): React.JSX.Element {
     return () => window.clearInterval(timer)
   }, [refresh])
 
-  const mine = ports?.filter((p) => p.pane !== undefined) ?? []
-  const other = ports?.filter((p) => p.pane === undefined) ?? []
+  const mine = ports?.filter((p) => p.pane !== undefined && here.has(p.pane)) ?? []
+  const other = ports?.filter((p) => p.pane === undefined || !here.has(p.pane)) ?? []
   const remotePort = Number(remote)
   const localPort = local.trim() === '' ? undefined : Number(local)
-  const valid = (n: number | undefined): boolean => n !== undefined && Number.isInteger(n) && n > 0 && n < 65536
-  const ready = host.trim() !== '' && valid(remotePort) && (localPort === undefined || valid(localPort))
+  const ready = host.trim() !== '' && validPort(remotePort) && (localPort === undefined || validPort(localPort))
+  const ws = activeWorkspace(s)
+  const here = new Set(ws ? workspacePanes(ws) : [])
+  const label = (host: string): string | undefined => s.state.machines.find((m) => m.target === host)?.label
 
   const row = (p: ListeningPort): React.JSX.Element => (
     <div className="port-row" key={`${p.port}-${p.pid}`}>
@@ -226,10 +355,10 @@ function Ports(): React.JSX.Element {
 
   return (
     <div className="ports">
-      <div className="panel-section">From your panes</div>
+      <div className="panel-section">From {activeWorkspace(s)?.name ?? 'this workspace'}</div>
       {ports === null && <div className="tree-note">Loading…</div>}
       {ports !== null && mine.length === 0 && (
-        <div className="tree-note">No pane is listening on a port. Start a dev server in a pane and it shows up here.</div>
+        <div className="tree-note">No pane in this workspace is listening on a port. Start a dev server in a pane and it shows up here.</div>
       )}
       {mine.map(row)}
 
@@ -246,39 +375,9 @@ function Ports(): React.JSX.Element {
       {s.forwards.length === 0 && (
         <div className="tree-note">Reach a port on another machine as if it were on this one. Uses your own ssh and its config.</div>
       )}
-      {s.forwards.map((f) => {
-        const up = f.state === 'active' || f.state === 'starting'
-        return (
-          <div className="forward" key={f.id}>
-            <div className="port-row">
-              <span className={`dot ${f.state === 'active' ? 'working still' : f.state === 'starting' ? 'working' : f.state === 'failed' ? 'blocked' : 'exited'}`} title={f.state} />
-              <span className="port-what" title={`localhost:${f.localPort} → ${f.host}:${f.remotePort}`}>
-                <span className="port-num">{f.localPort}</span>
-                <span className="muted"> → </span>
-                {f.host}:{f.remotePort}
-              </span>
-              {f.state === 'active' && (
-                <button className="btn small-btn" onClick={() => openLocalPort(f.localPort)}>
-                  Open
-                </button>
-              )}
-              {up ? (
-                <button className="btn small-btn" onClick={() => void run({ op: 'stopForward', id: f.id })}>
-                  Stop
-                </button>
-              ) : (
-                <button className="btn small-btn" onClick={() => void run({ op: 'startForward', host: f.host, remotePort: f.remotePort, localPort: f.localPort })}>
-                  Start
-                </button>
-              )}
-              <button className="icon-btn" title="Remove" onClick={() => void run({ op: 'removeForward', id: f.id })}>
-                <Close />
-              </button>
-            </div>
-            {f.state === 'failed' && f.error && <div className="forward-error">{f.error}</div>}
-          </div>
-        )
-      })}
+      {s.forwards.map((f) => (
+        <ForwardRow key={f.id} f={f} label={label(f.host)} />
+      ))}
 
       <form
         className="forward-form"
@@ -309,6 +408,7 @@ function Ports(): React.JSX.Element {
 
 export function SidePanel(): React.JSX.Element | null {
   const panel = useStore((s) => s.panel)
+  const machine = useStore((s) => s.state.machines.find((m) => m.id === activeWorkspace(s)?.machine))
   if (!panel) return null
   return (
     <aside className="side-panel">
@@ -326,7 +426,7 @@ export function SidePanel(): React.JSX.Element | null {
           <Close />
         </button>
       </div>
-      {panel === 'files' ? <Files /> : <Ports />}
+      {panel === 'files' ? <Files /> : machine ? <MachinePorts key={machine.id} machine={machine} /> : <Ports />}
     </aside>
   )
 }

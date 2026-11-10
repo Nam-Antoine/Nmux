@@ -1,4 +1,3 @@
-// The one seam between the UI and the Rust shell.
 import { invoke } from '@tauri-apps/api/core'
 import { listen } from '@tauri-apps/api/event'
 import { getCurrentWebview } from '@tauri-apps/api/webview'
@@ -7,12 +6,10 @@ import { open } from '@tauri-apps/plugin-dialog'
 import { isPermissionGranted, requestPermission, sendNotification } from '@tauri-apps/plugin-notification'
 import type { Op, Reply, ServerEvent } from './types'
 
-/** Send one request to nmux-server. Rejects with the server's reason. */
 export function call(op: Op): Promise<Reply> {
   return invoke<Reply>('call', { op })
 }
 
-/** Fire-and-forget, for input and resize where a lost call cannot be acted on anyway. */
 export function send(op: Op): void {
   call(op).catch((err) => console.warn('[nmux]', op.op, err))
 }
@@ -60,7 +57,6 @@ export function openLocalPort(port: number): void {
   invoke('open_local_port', { port }).catch((err) => console.warn('[nmux] open port', err))
 }
 
-/** Files dropped on the window, with the point they were dropped at (CSS pixels). */
 export function onFileDrop(handler: (paths: string[], x: number, y: number) => void): Promise<() => void> {
   return getCurrentWebview().onDragDropEvent((event) => {
     if (event.payload.type !== 'drop') return
@@ -69,10 +65,8 @@ export function onFileDrop(handler: (paths: string[], x: number, y: number) => v
   })
 }
 
-/** The window has no system title bar; these stand in for its buttons. */
 export const appWindow = {
   minimize: (): void => void getCurrentWindow().minimize(),
   toggleMaximize: (): void => void getCurrentWindow().toggleMaximize(),
-  /** Hides to the tray; panes keep running. */
   close: (): void => void getCurrentWindow().close()
 }

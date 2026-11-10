@@ -1,7 +1,3 @@
-//! The Nmux window. A thin shell: it finds (or starts) `nmux-server`, relays
-//! requests and events between it and the UI, and owns the tray icon. All
-//! logic lives in the server, so closing this window stops nothing.
-
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 use std::path::{Path, PathBuf};
@@ -20,12 +16,9 @@ use tokio::sync::RwLock;
 struct Bridge {
     client: RwLock<Option<Arc<Client>>>,
     data_dir: PathBuf,
-    /// A non-default data directory (tests) is passed on to the server.
     custom_dir: bool,
 }
 
-/// The one request path from the UI: an `Op` in, its reply out. The server
-/// validates everything; the shell adds nothing and trusts nothing.
 #[tauri::command]
 async fn call(bridge: State<'_, Arc<Bridge>>, op: serde_json::Value) -> Result<serde_json::Value, String> {
     let op: Op = serde_json::from_value(op).map_err(|e| format!("bad request: {e}"))?;
@@ -37,8 +30,6 @@ async fn call(bridge: State<'_, Arc<Bridge>>, op: serde_json::Value) -> Result<s
     serde_json::to_value(reply).map_err(|e| e.to_string())
 }
 
-/// Open a cloud session in the browser. Only claude.ai links are accepted,
-/// whatever the UI (or terminal output it rendered) asks for.
 #[tauri::command]
 fn open_cloud_url(app: AppHandle, url: String) -> Result<(), String> {
     let rest = url.strip_prefix("https://claude.ai/").ok_or("only claude.ai links can be opened")?;
@@ -48,7 +39,6 @@ fn open_cloud_url(app: AppHandle, url: String) -> Result<(), String> {
     app.opener().open_url(url, None::<&str>).map_err(|e| e.to_string())
 }
 
-/// Ask the server to resolve a path and confirm it is inside a workspace.
 async fn checked_path(bridge: &Bridge, path: String) -> Result<String, String> {
     let client = bridge.client.read().await.clone().ok_or("not connected to nmux-server")?;
     match client.call(Op::CheckPath { path }).await? {
@@ -57,21 +47,18 @@ async fn checked_path(bridge: &Bridge, path: String) -> Result<String, String> {
     }
 }
 
-/// Open a workspace file with the program Windows associates with it.
 #[tauri::command]
 async fn open_path(app: AppHandle, bridge: State<'_, Arc<Bridge>>, path: String) -> Result<(), String> {
     let path = checked_path(&bridge, path).await?;
     app.opener().open_path(path, None::<&str>).map_err(|e| e.to_string())
 }
 
-/// Show a workspace file in the file manager.
 #[tauri::command]
 async fn reveal_path(app: AppHandle, bridge: State<'_, Arc<Bridge>>, path: String) -> Result<(), String> {
     let path = checked_path(&bridge, path).await?;
     app.opener().reveal_item_in_dir(path).map_err(|e| e.to_string())
 }
 
-/// Open `http://localhost:<port>` in the browser.
 #[tauri::command]
 fn open_local_port(app: AppHandle, port: u16) -> Result<(), String> {
     if port == 0 {
@@ -106,7 +93,6 @@ fn start_server(data_dir: &Path, custom_dir: bool) -> std::io::Result<()> {
         use std::os::windows::process::CommandExt;
         const CREATE_NEW_PROCESS_GROUP: u32 = 0x0000_0200;
         const CREATE_NO_WINDOW: u32 = 0x0800_0000;
-        // Its own group and no console: it must outlive this window.
         command.creation_flags(CREATE_NEW_PROCESS_GROUP | CREATE_NO_WINDOW);
     }
     command.spawn().map(drop)
@@ -128,7 +114,6 @@ async fn connect_or_start(bridge: &Bridge) -> Result<(Client, UnboundedReceiver<
     Err(format!("nmux-server did not start: {last}"))
 }
 
-/// Keep a connection to the server for as long as the window lives.
 async fn relay(app: AppHandle, bridge: Arc<Bridge>) {
     loop {
         match connect_or_start(&bridge).await {
@@ -168,8 +153,6 @@ fn main() {
     let bridge = Arc::new(Bridge { client: RwLock::new(None), data_dir, custom_dir });
 
     let mut builder = tauri::Builder::default();
-    // One window per data directory: a run on its own NMUX_DATA_DIR (tests,
-    // a second profile) must not be handed over to the main instance.
     if !custom_dir {
         builder = builder.plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| show_main(app)));
     }
@@ -203,7 +186,6 @@ fn main() {
             Ok(())
         })
         .on_window_event(|window, event| {
-            // Closing the window only hides it; the panes keep running.
             if let WindowEvent::CloseRequested { api, .. } = event {
                 api.prevent_close();
                 let _ = window.hide();

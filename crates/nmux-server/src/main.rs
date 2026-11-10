@@ -1,4 +1,3 @@
-// No console window: the server runs in the background.
 #![cfg_attr(all(windows, not(debug_assertions)), windows_subsystem = "windows")]
 
 use std::path::PathBuf;
@@ -27,7 +26,6 @@ fn main() -> anyhow::Result<()> {
         data_dir,
         env: launch::process_env(),
         claude_dir: transcripts::claude_config_dir(),
-        // Only the real per-user server takes over the Electron app's sessions.
         legacy_sessions: if custom { None } else { nmux_server::legacy_sessions_file() },
     };
     tokio::runtime::Builder::new_multi_thread().enable_all().build()?.block_on(nmux_server::run(config))

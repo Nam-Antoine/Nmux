@@ -1,5 +1,3 @@
-// Keyboard control, herdr/tmux style: press the prefix (Ctrl+B), release,
-// then one key. Everything here is also reachable with the mouse.
 import { send } from './api'
 import { activeTab, activeWorkspace, getStore, run, update } from './store'
 import type { PaneSpec, Side } from './types'
@@ -49,7 +47,6 @@ function arm(on: boolean): void {
 const claude: PaneSpec = { kind: 'claude' }
 const shell: PaneSpec = { kind: 'shell' }
 
-/** Returns true when the key was an Nmux command and must not reach the pane. */
 export function handleKey(ev: KeyboardEvent): boolean {
   const s = getStore()
   if (s.dialog) return false
@@ -63,7 +60,6 @@ export function handleKey(ev: KeyboardEvent): boolean {
     return false
   }
 
-  // Modifier keys on their way down do not complete the chord.
   if (key === 'Control' || key === 'Shift' || key === 'Alt' || key === 'Meta') return true
   arm(false)
 
@@ -112,7 +108,6 @@ export function handleKey(ev: KeyboardEvent): boolean {
   return true
 }
 
-/** Keys pressed while focus is outside a terminal (sidebar, empty window). */
 export function installGlobalKeys(): void {
   window.addEventListener('keydown', (ev) => {
     const target = ev.target as HTMLElement | null

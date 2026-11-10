@@ -1,11 +1,3 @@
-//! Panes on another machine.
-//!
-//! A remote pane is the user's own `ssh` in a local pseudo-terminal. On the
-//! far side the program runs inside a tmux session when tmux is there, so it
-//! keeps going when the connection drops or Nmux closes, and starting the
-//! pane again picks it up where it was. Keys and passwords never pass through
-//! Nmux: OpenSSH asks for them in the pane, like in any terminal.
-
 use std::collections::BTreeMap;
 use std::io::Write;
 use std::process::{Command, Stdio};
@@ -17,37 +9,27 @@ use crate::launch::{find_on_path, Launch};
 type Env = BTreeMap<String, String>;
 
 const SKIP_PERMISSIONS_FLAG: &str = "--dangerously-skip-permissions";
-/// How long an unattended check or clean-up may take before it is given up on.
 const BACKGROUND_TIMEOUT_SECS: u32 = 12;
 
-/// Quote one word for a POSIX shell. Single quotes are also read the same
-/// way by zsh and fish, which matter because ssh hands the command line to
-/// the user's login shell.
 pub fn sh_quote(text: &str) -> String {
     format!("'{}'", text.replace('\'', "'\\''"))
 }
 
-/// What a remote pane runs.
 pub enum Program<'a> {
     Shell,
     Claude {
-        /// UUID Nmux owns for this conversation.
         session_id: &'a str,
-        /// Continue that conversation instead of starting it.
         resume: bool,
         extra_args: &'a [String],
         skip_permissions: bool,
     },
 }
 
-/// Name of the tmux session behind a pane. The creation time keeps two
-/// Nmux installs that share a host from colliding on a pane id.
 pub fn tmux_session(pane: PaneId, created_at_ms: u64) -> String {
     format!("nmux-{}-{}", pane.0, created_at_ms / 1000 % 1_000_000)
 }
 
 fn cd(cwd: &str) -> String {
-    // `~` only expands outside quotes, so it stays outside.
     if cwd == "~" {
         "cd".to_string()
     } else if let Some(rest) = cwd.strip_prefix("~/") {
@@ -57,7 +39,6 @@ fn cd(cwd: &str) -> String {
     }
 }
 
-/// The `sh` script the far side runs for a pane.
 pub fn script(cwd: &str, session: &str, program: &Program) -> String {
     let run = match program {
         Program::Shell => None,
@@ -73,13 +54,10 @@ pub fn script(cwd: &str, session: &str, program: &Program) -> String {
             }
             let id = sh_quote(session_id);
             let claude = if *resume {
-                // Nmux cannot see the far side's transcripts; if there is
-                // nothing to resume, a new conversation beats a dead pane.
                 format!("claude --resume {id}{flags} || claude{flags}")
             } else {
                 format!("claude --session-id {id}{flags}")
             };
-            // A login, interactive shell: that is where PATH gets `claude` on most setups.
             Some(format!("${{SHELL:-sh}} -lic {}", sh_quote(&claude)))
         }
     };
@@ -102,19 +80,16 @@ fn ssh_bin(env: &Env) -> String {
     find_on_path("ssh", env).map(|p| p.to_string_lossy().into_owned()).unwrap_or_else(|| "ssh".into())
 }
 
-/// The local command for a remote pane: `ssh -t <target> sh -c '<script>'`.
 pub fn launch(target: &str, script: &str, env: &Env) -> Launch {
     Launch {
         file: ssh_bin(env),
         args: vec![
             "-t".into(),
-            // Screen updates compress well; typing is unaffected.
             "-C".into(),
             "-o".into(),
             "ServerAliveInterval=30".into(),
             "-o".into(),
             "ServerAliveCountMax=4".into(),
-            // Nothing after this is an option, whatever the target looks like.
             "--".into(),
             target.into(),
             format!("sh -c {}", sh_quote(script)),
@@ -122,7 +97,6 @@ pub fn launch(target: &str, script: &str, env: &Env) -> Launch {
     }
 }
 
-/// An `ssh` that can never stop to ask a question.
 fn unattended(target: &str, remote_command: &str, env: &Env) -> Command {
     let mut command = Command::new(ssh_bin(env));
     #[cfg(windows)]
@@ -142,7 +116,11 @@ fn unattended(target: &str, remote_command: &str, env: &Env) -> Command {
     command
 }
 
-/// What a connection check found.
+fn last_line(stderr: &[u8], fallback: &str) -> String {
+    let text = String::from_utf8_lossy(stderr);
+    text.lines().map(str::trim).filter(|l| !l.is_empty()).last().unwrap_or(fallback).chars().take(300).collect()
+}
+
 #[derive(Debug, PartialEq, Eq)]
 pub struct Probe {
     pub status: MachineStatus,
@@ -154,24 +132,21 @@ pub struct Probe {
 const PROBE: &str = "echo nmux-ok; command -v tmux >/dev/null 2>&1 && echo nmux-tmux; \
                      ${SHELL:-sh} -lic 'command -v claude' >/dev/null 2>&1 && echo nmux-claude; true";
 
-/// Read the outcome of the probe command.
 pub fn read_probe(stdout: &str, stderr: &str) -> Probe {
     let has = |mark: &str| stdout.lines().any(|l| l.trim() == mark);
     if has("nmux-ok") {
         return Probe { status: MachineStatus::Online, detail: None, tmux: has("nmux-tmux"), claude: has("nmux-claude") };
     }
-    let reason = stderr.lines().map(str::trim).filter(|l| !l.is_empty()).last().unwrap_or("ssh gave no reason");
     let lower = stderr.to_lowercase();
     let auth = lower.contains("permission denied") || lower.contains("authentication") || lower.contains("passphrase");
     Probe {
         status: if auth { MachineStatus::Auth } else { MachineStatus::Error },
-        detail: Some(reason.chars().take(300).collect()),
+        detail: Some(last_line(stderr.as_bytes(), "ssh gave no reason")),
         tmux: false,
         claude: false,
     }
 }
 
-/// Connect without prompting and see what is there. Blocks; call off the lock.
 pub fn probe(target: &str, env: &Env) -> Probe {
     let command = format!("sh -c {}", sh_quote(PROBE));
     match unattended(target, &command, env).stdin(Stdio::null()).output() {
@@ -185,14 +160,38 @@ pub fn probe(target: &str, env: &Env) -> Probe {
     }
 }
 
-/// End the tmux sessions of closed panes. Best effort, in the background:
-/// the machine may be off, and closing a pane must not wait for it.
+fn process_name(line: &str) -> String {
+    line.split("((\"").nth(1).and_then(|rest| rest.split('"').next()).unwrap_or_default().to_string()
+}
+
+pub fn read_listeners(text: &str) -> Vec<(String, u16, String)> {
+    let mut found: Vec<(String, u16, String)> = Vec::new();
+    for line in text.lines() {
+        let Some((address, port, _)) = crate::ports::parse_ss(line).into_iter().next() else { continue };
+        if !found.iter().any(|f| f.1 == port) {
+            found.push((address, port, process_name(line)));
+        }
+    }
+    found.sort_by_key(|f| f.1);
+    found
+}
+
+pub fn listening(target: &str, env: &Env) -> Result<Vec<(String, u16, String)>, String> {
+    let script = "ss -Hltnp 2>/dev/null || netstat -ltn 2>/dev/null; echo nmux-ok";
+    let command = format!("sh -c {}", sh_quote(script));
+    let out = unattended(target, &command, env).stdin(Stdio::null()).output().map_err(|e| format!("could not run ssh: {e}"))?;
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    if !stdout.lines().any(|l| l.trim() == "nmux-ok") {
+        return Err(last_line(&out.stderr, "ssh gave no reason"));
+    }
+    Ok(read_listeners(&stdout))
+}
+
 pub fn end_sessions(target: String, sessions: Vec<String>, env: Env) {
     if sessions.is_empty() {
         return;
     }
     std::thread::spawn(move || {
-        // `=name` is an exact match; a bare name would also match a prefix.
         let kills: Vec<String> =
             sessions.iter().map(|s| format!("tmux kill-session -t {} 2>/dev/null", sh_quote(&format!("={s}")))).collect();
         let command = format!("sh -c {}", sh_quote(&format!("{}; true", kills.join("; "))));
@@ -200,8 +199,6 @@ pub fn end_sessions(target: String, sessions: Vec<String>, env: Env) {
     });
 }
 
-/// Copy a pasted image to the machine and return where it landed, so the
-/// path typed into the pane exists where the agent runs.
 pub fn upload(target: &str, name: &str, bytes: &[u8], env: &Env) -> Result<String, String> {
     if !name.chars().all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '-' | '_')) {
         return Err("bad file name".into());
@@ -219,9 +216,7 @@ pub fn upload(target: &str, name: &str, bytes: &[u8], env: &Env) -> Result<Strin
     }
     let out = child.wait_with_output().map_err(|e| e.to_string())?;
     if !out.status.success() {
-        let stderr = String::from_utf8_lossy(&out.stderr);
-        let reason = stderr.lines().map(str::trim).filter(|l| !l.is_empty()).last().unwrap_or("ssh failed");
-        return Err(format!("could not copy the image to the machine: {reason}"));
+        return Err(format!("could not copy the image to the machine: {}", last_line(&out.stderr, "ssh failed")));
     }
     Ok(path)
 }
@@ -256,7 +251,6 @@ mod tests {
         let extra = vec!["--model".to_string(), "it's".to_string(), SKIP_PERMISSIONS_FLAG.to_string()];
         let start = Program::Claude { session_id: "uuid-1", resume: false, extra_args: &extra, skip_permissions: true };
         let s = script("~/proj", "nmux-9-1", &start);
-        // Without tmux the command is run directly, quoted once.
         assert!(s.contains("else ${SHELL:-sh} -lic 'claude --session-id '\\''uuid-1'\\'' --dangerously-skip-permissions "), "{s}");
         assert_eq!(s.matches(SKIP_PERMISSIONS_FLAG).count(), 2, "once per branch, not repeated from extra args: {s}");
 
@@ -271,6 +265,21 @@ mod tests {
         let dashes = l.args.iter().position(|a| a == "--").unwrap();
         assert_eq!(l.args[dashes + 1], "-oProxyCommand=evil");
         assert_eq!(l.args.last().unwrap(), "sh -c 'true'");
+    }
+
+    #[test]
+    fn remote_listeners_are_read_from_ss_and_netstat() {
+        let ss = "LISTEN 0 511 127.0.0.1:5173 0.0.0.0:* users:((\"node\",pid=1234,fd=20))\n\
+                  LISTEN 0 128 0.0.0.0:22 0.0.0.0:*\n\
+                  LISTEN 0 128 [::]:22 [::]:*\nnmux-ok\n";
+        assert_eq!(
+            read_listeners(ss),
+            vec![("0.0.0.0".to_string(), 22, String::new()), ("127.0.0.1".to_string(), 5173, "node".to_string())]
+        );
+        let netstat = "Active Internet connections (only servers)\n\
+                       Proto Recv-Q Send-Q Local Address           Foreign Address         State\n\
+                       tcp        0      0 0.0.0.0:8080            0.0.0.0:*               LISTEN\n";
+        assert_eq!(read_listeners(netstat), vec![("0.0.0.0".to_string(), 8080, String::new())]);
     }
 
     #[test]

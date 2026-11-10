@@ -1,5 +1,4 @@
 :root {
-  /* Measured from the Herdr desktop app. */
   --bg: #131518;
   --side: #101114;
   --pane: #17191d;
@@ -102,8 +101,6 @@ kbd {
   height: 100%;
 }
 
-/* ---- sidebar ---------------------------------------------------------- */
-
 .sidebar {
   width: var(--sidebar-w);
   flex: none;
@@ -189,7 +186,6 @@ kbd {
   font-size: 10.5px;
 }
 
-/* "This computer": the machine a group of workspaces lives on. */
 .machine-row {
   display: flex;
   align-items: center;
@@ -325,6 +321,35 @@ kbd {
   text-align: right;
   margin-left: -3px;
 }
+.space-tools {
+  display: flex;
+  flex: none;
+  gap: 1px;
+  margin-right: -3px;
+}
+.space-tools .icon-btn {
+  width: 19px;
+  height: 19px;
+  color: var(--fg-3);
+  opacity: 0.55;
+}
+.space-tools .icon-btn svg {
+  width: 13px;
+  height: 13px;
+}
+.space-row:hover .space-tools .icon-btn,
+.space-row.active .space-tools .icon-btn {
+  opacity: 1;
+}
+.space-tools .icon-btn.live {
+  color: var(--ok, #6fcf97);
+  opacity: 1;
+}
+.space-tools .icon-btn.on {
+  color: var(--focus);
+  background: var(--tab);
+  opacity: 1;
+}
 .row-actions {
   display: none;
   gap: 2px;
@@ -432,8 +457,6 @@ kbd {
   border-radius: 4px;
   font-size: 11px;
 }
-
-/* ---- shared bits ------------------------------------------------------ */
 
 .icon-btn {
   width: 26px;
@@ -545,8 +568,6 @@ kbd {
   justify-content: flex-end;
   margin-top: 6px;
 }
-
-/* ---- main ------------------------------------------------------------- */
 
 .main {
   flex: 1;
@@ -792,14 +813,6 @@ kbd {
   font-size: 12px;
   white-space: nowrap;
 }
-.pane-name {
-  color: var(--fg-2);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  flex: 0 1 auto;
-  min-width: 0;
-}
 .pane-cwd {
   color: var(--muted);
   font-size: 11.5px;
@@ -914,8 +927,6 @@ kbd {
 .overlay-card .small {
   margin-top: 8px;
 }
-
-/* ---- empty, dialogs, notices ------------------------------------------- */
 
 .empty {
   flex: 1;

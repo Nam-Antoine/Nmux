@@ -6,7 +6,7 @@ import type { LayoutNode, Pane, PaneId, Tab, Workspace } from '../types'
 import { Close, FilesIcon, FolderIcon, KIND_LABEL, KindIcon, Monitor, Play, Plus, ServerIcon, PortsIcon, SidebarIcon, SplitDown, SplitRight, StateDot, WinClose, WinMax, WinMin, Zoom } from './icons'
 import { InlineEdit } from './InlineEdit'
 
-export function WindowControls(): React.JSX.Element {
+function WindowControls(): React.JSX.Element {
   return (
     <div className="win-controls">
       <button className="win-btn" title="Minimize" onClick={appWindow.minimize}>

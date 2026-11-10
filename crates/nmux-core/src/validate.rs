@@ -1,6 +1,3 @@
-//! Checks on everything a client sends before it reaches the model or a
-//! command line. The UI is not trusted: these run in the server.
-
 use crate::model::{PaneKind, PaneSpec};
 
 pub const MAX_NAME: usize = 80;
@@ -21,7 +18,6 @@ fn has_control(text: &str, allow_newlines: bool) -> bool {
     text.chars().any(|c| c.is_control() && !(allow_newlines && (c == '\n' || c == '\r' || c == '\t')))
 }
 
-/// A display name: trimmed, single line, bounded.
 pub fn name(raw: &str) -> Result<String, Rejected> {
     let n = raw.trim();
     if n.is_empty() {
@@ -36,7 +32,6 @@ pub fn name(raw: &str) -> Result<String, Rejected> {
     Ok(n.to_string())
 }
 
-/// An absolute folder path. Whether it exists is checked by the server.
 pub fn cwd(raw: &str) -> Result<String, Rejected> {
     let p = raw.trim();
     if p.is_empty() || p.len() > MAX_PATH {
@@ -53,8 +48,6 @@ pub fn cwd(raw: &str) -> Result<String, Rejected> {
     Ok(p.to_string())
 }
 
-/// A folder on another machine: absolute, or under the home folder (`~`).
-/// It is quoted for the remote shell where it is used; this keeps it sane.
 pub fn remote_cwd(raw: &str) -> Result<String, Rejected> {
     let p = raw.trim();
     if p.is_empty() || p.len() > MAX_PATH {
@@ -69,8 +62,6 @@ pub fn remote_cwd(raw: &str) -> Result<String, Rejected> {
     Ok(p.to_string())
 }
 
-/// What goes after `ssh`: an alias from `~/.ssh/config`, `user@host`, or
-/// `ssh://user@host:port`. It becomes one argument and must not look like an option.
 pub fn ssh_target(raw: &str) -> Result<String, Rejected> {
     let t = raw.trim();
     if t.is_empty() || t.len() > 255 {
@@ -85,8 +76,6 @@ pub fn ssh_target(raw: &str) -> Result<String, Rejected> {
     Ok(t.to_string())
 }
 
-/// Extra arguments for `claude`. Each one becomes its own argv entry, so
-/// there is no quoting to escape from; this only keeps them sane.
 pub fn extra_args(raw: &[String]) -> Result<Vec<String>, Rejected> {
     if raw.len() > MAX_ARGS {
         return reject("too many extra arguments");
@@ -99,7 +88,6 @@ pub fn extra_args(raw: &[String]) -> Result<Vec<String>, Rejected> {
     Ok(raw.to_vec())
 }
 
-/// A cloud session id as printed by `claude --cloud`.
 pub fn cloud_session_id(raw: &str) -> Result<String, Rejected> {
     let id = raw.trim();
     let body = id.strip_prefix("session_").or_else(|| id.strip_prefix("cse_"));
@@ -111,8 +99,6 @@ pub fn cloud_session_id(raw: &str) -> Result<String, Rejected> {
     }
 }
 
-/// The task text for a cloud session. It is passed as one argument; a leading
-/// dash would be read as an option, so that is refused.
 pub fn cloud_task(raw: &str) -> Result<String, Rejected> {
     let t = raw.trim();
     if t.is_empty() {
@@ -130,7 +116,6 @@ pub fn cloud_task(raw: &str) -> Result<String, Rejected> {
     Ok(t.to_string())
 }
 
-/// Validate and normalise a request to create a pane.
 pub fn pane_spec(raw: &PaneSpec) -> Result<PaneSpec, Rejected> {
     let mut spec = PaneSpec::new(raw.kind);
     spec.name = match raw.name.as_deref().map(str::trim) {

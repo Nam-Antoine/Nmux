@@ -1,8 +1,3 @@
-//! The Nmux model: workspaces, tabs, split panes and agent state.
-//!
-//! Pure logic. The server (`nmux-server`) owns processes and I/O and drives
-//! this; the UI only ever sees snapshots of [`model::State`].
-
 pub mod detect;
 pub mod layout;
 pub mod model;

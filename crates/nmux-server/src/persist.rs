@@ -1,5 +1,3 @@
-//! Saving and loading the model, and importing sessions from the Electron Nmux.
-
 use std::path::{Path, PathBuf};
 
 use nmux_core::{PaneKind, PaneSpec, State};
@@ -17,7 +15,6 @@ pub fn state_path(data_dir: &Path) -> PathBuf {
     data_dir.join(FILE)
 }
 
-/// Atomic: a crash never leaves a torn file.
 pub fn save(data_dir: &Path, state: &State) -> std::io::Result<()> {
     std::fs::create_dir_all(data_dir)?;
     let file = state_path(data_dir);
@@ -27,13 +24,11 @@ pub fn save(data_dir: &Path, state: &State) -> std::io::Result<()> {
     std::fs::rename(&tmp, &file)
 }
 
-/// `None` when there is no saved state (first run), or it cannot be read.
 pub fn load(data_dir: &Path) -> Option<State> {
     let body = std::fs::read(state_path(data_dir)).ok()?;
     let file: StoreFile = match serde_json::from_slice(&body) {
         Ok(f) => f,
         Err(e) => {
-            // Keep the unreadable file for inspection instead of overwriting it.
             eprintln!("[nmux] state file is not readable ({e}); starting empty");
             let _ = std::fs::rename(state_path(data_dir), data_dir.join("state.unreadable.json"));
             return None;
@@ -78,8 +73,6 @@ struct LegacySession {
     created_at: u64,
 }
 
-/// Build a state from the Electron app's `sessions.json`: one workspace per
-/// folder, one tab per session. Everything arrives exited; nothing is started.
 pub fn import_legacy(file: &Path) -> Option<State> {
     let legacy: LegacyFile = serde_json::from_slice(&std::fs::read(file).ok()?).ok()?;
     if legacy.version != 1 {
@@ -120,7 +113,6 @@ pub fn import_legacy(file: &Path) -> Option<State> {
 }
 
 fn same_folder(a: &str, b: &str) -> bool {
-    // Windows paths compare without case and with either slash, whatever the host.
     let is_drive = |p: &str| p.as_bytes().get(1) == Some(&b':');
     if is_drive(a) && is_drive(b) {
         let norm = |p: &str| p.trim_end_matches(['/', '\\']).replace('/', "\\").to_lowercase();
