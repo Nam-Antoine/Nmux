@@ -3,7 +3,7 @@ import { openCloudUrl } from '../api'
 import { activeTab, activeWorkspace, leaves, rollup, run, tabLabel, update, useStore } from '../store'
 import { terminals } from '../terminals'
 import type { LayoutNode, Pane, PaneId, Tab, Workspace } from '../types'
-import { Close, KIND_LABEL, KindIcon, Plus, SidebarIcon, SplitDown, SplitRight, StateDot, Zoom } from './icons'
+import { Close, FilesIcon, KIND_LABEL, KindIcon, Plus, PortsIcon, SidebarIcon, SplitDown, SplitRight, StateDot, Zoom } from './icons'
 import { InlineEdit } from './InlineEdit'
 
 function TabBar({ ws, current }: { ws: Workspace; current: Tab }): React.JSX.Element {
@@ -99,6 +99,21 @@ function TabBar({ ws, current }: { ws: Workspace; current: Tab }): React.JSX.Ele
           </>
         )}
       </div>
+      <span className="grow" />
+      <button
+        className={`icon-btn${s.panel === 'files' ? ' on' : ''}`}
+        title="Files (Ctrl+B, f)"
+        onClick={() => update({ panel: s.panel === 'files' ? null : 'files' })}
+      >
+        <FilesIcon />
+      </button>
+      <button
+        className={`icon-btn${s.panel === 'ports' ? ' on' : ''}`}
+        title="Ports and SSH forwards (Ctrl+B, o)"
+        onClick={() => update({ panel: s.panel === 'ports' ? null : 'ports' })}
+      >
+        <PortsIcon />
+      </button>
     </div>
   )
 }
@@ -168,6 +183,7 @@ function PaneView({ id, focused, solo }: { id: PaneId; focused: boolean; solo: b
   return (
     <div
       className={`pane${focused ? ' focused' : ''}${solo ? ' solo' : ''}`}
+      data-pane={id}
       onMouseDownCapture={() => {
         if (!focused) void run({ op: 'focusPane', pane: id })
       }}

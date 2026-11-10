@@ -48,6 +48,38 @@ fn open_cloud_url(app: AppHandle, url: String) -> Result<(), String> {
     app.opener().open_url(url, None::<&str>).map_err(|e| e.to_string())
 }
 
+/// Ask the server to resolve a path and confirm it is inside a workspace.
+async fn checked_path(bridge: &Bridge, path: String) -> Result<String, String> {
+    let client = bridge.client.read().await.clone().ok_or("not connected to nmux-server")?;
+    match client.call(Op::CheckPath { path }).await? {
+        nmux_proto::Reply::Path { path } => Ok(path),
+        _ => Err("unexpected reply".into()),
+    }
+}
+
+/// Open a workspace file with the program Windows associates with it.
+#[tauri::command]
+async fn open_path(app: AppHandle, bridge: State<'_, Arc<Bridge>>, path: String) -> Result<(), String> {
+    let path = checked_path(&bridge, path).await?;
+    app.opener().open_path(path, None::<&str>).map_err(|e| e.to_string())
+}
+
+/// Show a workspace file in the file manager.
+#[tauri::command]
+async fn reveal_path(app: AppHandle, bridge: State<'_, Arc<Bridge>>, path: String) -> Result<(), String> {
+    let path = checked_path(&bridge, path).await?;
+    app.opener().reveal_item_in_dir(path).map_err(|e| e.to_string())
+}
+
+/// Open `http://localhost:<port>` in the browser.
+#[tauri::command]
+fn open_local_port(app: AppHandle, port: u16) -> Result<(), String> {
+    if port == 0 {
+        return Err("not a port".into());
+    }
+    app.opener().open_url(format!("http://localhost:{port}"), None::<&str>).map_err(|e| e.to_string())
+}
+
 fn show_main(app: &AppHandle) {
     if let Some(window) = app.get_webview_window("main") {
         let _ = window.show();
@@ -141,7 +173,7 @@ fn main() {
         .plugin(tauri_plugin_notification::init())
         .plugin(tauri_plugin_opener::init())
         .manage(bridge.clone())
-        .invoke_handler(tauri::generate_handler![call, open_cloud_url])
+        .invoke_handler(tauri::generate_handler![call, open_cloud_url, open_path, reveal_path, open_local_port])
         .setup(move |app| {
             let show = MenuItem::with_id(app, "show", "Show Nmux", true, None::<&str>)?;
             let quit_item = MenuItem::with_id(app, "quit", "Quit Nmux (stops every pane)", true, None::<&str>)?;

@@ -1,8 +1,8 @@
 // The window's copy of the server's model, plus a little UI-only state.
 import { useSyncExternalStore } from 'react'
-import { call, notify, onConnected, onDisconnected, onServerEvent } from './api'
+import { call, notify, onConnected, onDisconnected, onFileDrop, onServerEvent } from './api'
 import { terminals } from './terminals'
-import type { AgentState, Pane, PaneId, PaneKind, State, Tab, Workspace } from './types'
+import type { AgentState, Forward, Pane, PaneId, PaneKind, State, Tab, Workspace } from './types'
 
 export type Dialog =
   | { type: 'workspace' }
@@ -18,6 +18,9 @@ export interface Store {
   problem: string | null
   sidebarOpen: boolean
   dialog: Dialog
+  /** Which side panel is open on the right. */
+  panel: 'files' | 'ports' | null
+  forwards: Forward[]
   /** The prefix key was pressed; the next key is an Nmux command. */
   prefix: boolean
   toast: string | null
@@ -30,6 +33,8 @@ let store: Store = {
   problem: null,
   sidebarOpen: true,
   dialog: null,
+  panel: null,
+  forwards: [],
   prefix: false,
   toast: null
 }
@@ -84,6 +89,8 @@ async function refresh(): Promise<void> {
     if (reply.kind === 'state') setState(reply.state)
     update({ connected: true, problem: null })
     terminals.reattachAll()
+    const forwards = await call({ op: 'listForwards' })
+    if (forwards.kind === 'forwards') update({ forwards: forwards.forwards })
     void call({ op: 'setWindowVisible', visible: !document.hidden })
   } catch (err) {
     update({ connected: false, problem: String(err) })
@@ -94,6 +101,7 @@ export async function start(): Promise<void> {
   await onServerEvent((event) => {
     if (event.event === 'state') setState(event.state)
     else if (event.event === 'output') terminals.output(event.pane, event.seq, event.data)
+    else if (event.event === 'forwards') update({ forwards: event.forwards })
     else if (event.event === 'attention') {
       const pane = store.panes.get(event.pane)
       if (pane && (document.hidden || !document.hasFocus())) {
@@ -102,6 +110,14 @@ export async function start(): Promise<void> {
     }
   })
   await onConnected(() => void refresh())
+  // Files dropped on a pane are typed into it as paths (how agents take images and files).
+  await onFileDrop((paths, x, y) => {
+    const under = (document.elementFromPoint(x, y) as HTMLElement | null)?.closest<HTMLElement>('[data-pane]')
+    const pane = under ? Number(under.dataset.pane) : activeTab(store)?.focused
+    if (pane === undefined || paths.length === 0) return
+    terminals.paste(pane, paths.map((p) => (/\s/.test(p) ? `"${p}"` : p)).join(' ') + ' ')
+    terminals.focus(pane)
+  })
   await onDisconnected((why) => update({ connected: false, problem: why }))
   document.addEventListener('visibilitychange', () => {
     if (store.connected) void call({ op: 'setWindowVisible', visible: !document.hidden }).catch(() => {})

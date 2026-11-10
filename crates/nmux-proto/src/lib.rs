@@ -66,6 +66,24 @@ pub enum Op {
     Write { pane: PaneId, data: String },
     Resize { pane: PaneId, cols: u16, rows: u16 },
 
+    /// Entries of a folder inside a workspace.
+    ListDir { path: String },
+    /// A preview of a file inside a workspace.
+    ReadFile { path: String },
+    /// Resolve a path and confirm it is inside a workspace (before opening it).
+    CheckPath { path: String },
+    /// Save a pasted image to a private file and type its path into the pane.
+    PasteImage { pane: PaneId, extension: String, data: String },
+
+    /// TCP ports being listened on, with the pane that owns each when there is one.
+    ListPorts,
+    ListForwards,
+    /// `ssh -L`: make `remote_port` on `host` reachable as a local port.
+    #[serde(rename_all = "camelCase")]
+    StartForward { host: String, remote_port: u16, local_port: Option<u16> },
+    StopForward { id: u32 },
+    RemoveForward { id: u32 },
+
     /// Whether the window is on screen; decides if a finished agent counts as seen.
     SetWindowVisible { visible: bool },
     /// Stop every pane and exit.
@@ -102,6 +120,72 @@ pub enum Reply {
     Attached { snapshot: Snapshot },
     Flag { value: bool },
     Pane { pane: Option<PaneId> },
+    Dir { path: String, entries: Vec<DirEntry> },
+    File { file: FilePreview },
+    Path { path: String },
+    Ports { ports: Vec<ListeningPort> },
+    Forwards { forwards: Vec<Forward> },
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DirEntry {
+    pub name: String,
+    pub dir: bool,
+    pub size: u64,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FilePreview {
+    pub path: String,
+    pub size: u64,
+    pub content: FileContent,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "camelCase")]
+pub enum FileContent {
+    /// `truncated` when only the start of a long file is included.
+    Text { text: String, truncated: bool },
+    /// Base64 image bytes.
+    Image { mime: String, data: String },
+    Binary,
+    TooLarge,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ListeningPort {
+    pub port: u16,
+    pub address: String,
+    pub pid: u32,
+    pub process: String,
+    /// The pane whose process tree is listening, if any.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pane: Option<PaneId>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum ForwardState {
+    Starting,
+    Active,
+    Stopped,
+    Failed,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Forward {
+    pub id: u32,
+    pub host: String,
+    pub remote_port: u16,
+    pub local_port: u16,
+    pub state: ForwardState,
+    /// Why it failed, in ssh's words.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
 }
 
 /// What a terminal needs to show a pane as it is right now.
@@ -124,6 +208,7 @@ pub enum Event {
     Output { pane: PaneId, seq: u64, data: String },
     /// A pane's agent finished or needs an answer while out of sight.
     Attention { pane: PaneId, blocked: bool },
+    Forwards { forwards: Vec<Forward> },
 }
 
 pub async fn write_frame<W, T>(writer: &mut W, message: &T) -> std::io::Result<()>

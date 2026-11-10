@@ -88,6 +88,49 @@ export type Op =
   | { op: 'write'; pane: PaneId; data: string }
   | { op: 'resize'; pane: PaneId; cols: number; rows: number }
   | { op: 'setWindowVisible'; visible: boolean }
+  | { op: 'listDir'; path: string }
+  | { op: 'readFile'; path: string }
+  | { op: 'pasteImage'; pane: PaneId; extension: string; data: string }
+  | { op: 'listPorts' }
+  | { op: 'listForwards' }
+  | { op: 'startForward'; host: string; remotePort: number; localPort?: number }
+  | { op: 'stopForward'; id: number }
+  | { op: 'removeForward'; id: number }
+
+export interface DirEntry {
+  name: string
+  dir: boolean
+  size: number
+}
+
+export type FileContent =
+  | { type: 'text'; text: string; truncated: boolean }
+  | { type: 'image'; mime: string; data: string }
+  | { type: 'binary' }
+  | { type: 'tooLarge' }
+
+export interface FilePreview {
+  path: string
+  size: number
+  content: FileContent
+}
+
+export interface ListeningPort {
+  port: number
+  address: string
+  pid: number
+  process: string
+  pane?: PaneId
+}
+
+export interface Forward {
+  id: number
+  host: string
+  remotePort: number
+  localPort: number
+  state: 'starting' | 'active' | 'stopped' | 'failed'
+  error?: string
+}
 
 export interface Snapshot {
   data: string
@@ -104,8 +147,14 @@ export type Reply =
   | { kind: 'attached'; snapshot: Snapshot }
   | { kind: 'flag'; value: boolean }
   | { kind: 'pane'; pane?: PaneId }
+  | { kind: 'dir'; path: string; entries: DirEntry[] }
+  | { kind: 'file'; file: FilePreview }
+  | { kind: 'path'; path: string }
+  | { kind: 'ports'; ports: ListeningPort[] }
+  | { kind: 'forwards'; forwards: Forward[] }
 
 export type ServerEvent =
   | { event: 'state'; state: State }
   | { event: 'output'; pane: PaneId; seq: number; data: string }
   | { event: 'attention'; pane: PaneId; blocked: boolean }
+  | { event: 'forwards'; forwards: Forward[] }

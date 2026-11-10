@@ -21,6 +21,8 @@ export const BINDINGS: Array<[string, string]> = [
   ['w', 'Next workspace'],
   ['N', 'New workspace'],
   ['b', 'Toggle sidebar'],
+  ['f', 'Files panel'],
+  ['o', 'Ports panel'],
   ['Ctrl+B', 'Send Ctrl+B to the pane'],
   ['?', 'This help']
 ]
@@ -78,6 +80,8 @@ export function handleKey(ev: KeyboardEvent): boolean {
   if (key === '?') return update({ dialog: { type: 'help' } }), true
   if (key === 'N') return update({ dialog: { type: 'workspace' } }), true
   if (key === 'b') return update({ sidebarOpen: !s.sidebarOpen }), true
+  if (key === 'f') return update({ panel: s.panel === 'files' ? null : 'files' }), true
+  if (key === 'o') return update({ panel: s.panel === 'ports' ? null : 'ports' }), true
   if (!ws || !tab || pane === undefined) return true
 
   if (key === 'c') void run({ op: 'createTab', workspace: ws.id, pane: claude })

@@ -9,6 +9,7 @@ import { WebglAddon } from '@xterm/addon-webgl'
 import '@xterm/xterm/css/xterm.css'
 import { call, send } from './api'
 import { handleKey } from './keys'
+import { toast } from './store'
 import type { Pane, PaneId } from './types'
 
 export const terminalTheme = {
@@ -101,6 +102,21 @@ function create(pane: PaneId): Entry {
     return true
   })
   term.onData((data) => send({ op: 'write', pane, data }))
+  // A copied image has no text for the terminal to paste. Hand it to the
+  // server, which saves it and types the file's path into the pane; agents
+  // take an image that way.
+  host.addEventListener(
+    'paste',
+    (ev) => {
+      const item = Array.from(ev.clipboardData?.items ?? []).find((i) => i.kind === 'file' && i.type.startsWith('image/'))
+      const file = item?.getAsFile()
+      if (!file) return
+      ev.preventDefault()
+      ev.stopPropagation()
+      void pasteImage(pane, file)
+    },
+    true
+  )
   entries.set(pane, entry)
   return entry
 }
@@ -112,6 +128,17 @@ function syncSize(pane: PaneId, entry: Entry): void {
   if (cols === entry.sent.cols && rows === entry.sent.rows) return
   entry.sent = { cols, rows }
   send({ op: 'resize', pane, cols, rows })
+}
+
+async function pasteImage(pane: PaneId, file: File): Promise<void> {
+  try {
+    const bytes = new Uint8Array(await file.arrayBuffer())
+    let binary = ''
+    for (let i = 0; i < bytes.length; i += 0x8000) binary += String.fromCharCode(...bytes.subarray(i, i + 0x8000))
+    await call({ op: 'pasteImage', pane, extension: file.type.split('/')[1] ?? 'png', data: btoa(binary) })
+  } catch (err) {
+    toast(String(err))
+  }
 }
 
 async function attach(pane: PaneId, entry: Entry): Promise<void> {
@@ -166,6 +193,13 @@ export const terminals = {
   unmount(pane: PaneId, container: HTMLElement): void {
     const entry = entries.get(pane)
     if (entry && entry.host.parentElement === container) container.removeChild(entry.host)
+  },
+
+  /** Paste text as the terminal would, marked as a paste when the program asked for that. */
+  paste(pane: PaneId, text: string): void {
+    const entry = entries.get(pane)
+    if (entry) entry.term.paste(text)
+    else send({ op: 'write', pane, data: text })
   },
 
   focus(pane: PaneId): void {

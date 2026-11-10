@@ -3,9 +3,11 @@
 
 pub mod client;
 pub mod cloud_id;
+pub mod files;
 pub mod hub;
 pub mod launch;
 pub mod persist;
+pub mod ports;
 pub mod pty;
 pub mod screen;
 pub mod serve;

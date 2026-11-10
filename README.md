@@ -21,7 +21,42 @@ belong to Nmux, so closing VS Code (or the Nmux window) never kills them.
 - "Resume conversation" falls back to a new conversation when the old one has
   nothing to resume, and an exited session keeps its last screen.
 
-## Quick start
+## Rust version (this branch)
+
+Nmux is being rewritten in Rust, modelled on [Herdr](https://herdr.dev): a
+workspace per project, tabs inside it, split panes inside a tab, and a state
+for every agent (needs you, working, done, idle). The Electron app below is
+still the installed one until this replaces it.
+
+```
+crates/nmux-core     model, split layout, agent detection, input validation (no I/O)
+crates/nmux-proto    messages between server and clients
+crates/nmux-server   background server that owns the terminals; nmux-ctl client
+src-tauri/           the window: a thin Tauri shell over the server
+ui/                  React + xterm interface
+```
+
+- Panes run in `nmux-server`, so closing the window stops nothing. The layout
+  is saved; after a restart panes come back stopped and resume on request.
+- Files panel: the workspace folder as a tree, with preview, open, reveal and
+  "type this path into the pane".
+- Ports panel: ports your panes listen on (open in the browser), and SSH port
+  forwards (`ssh -L`) to other machines.
+- Paste a copied image, or drop files, into a pane: the agent gets the path.
+- Keyboard: `Ctrl+B` then a key (`?` lists them). Everything is on the mouse too.
+
+```bash
+cd ui && pnpm install --ignore-workspace && pnpm exec vite build && cd ..
+cargo build -p nmux -p nmux-server && ./target/debug/nmux.exe
+cargo test -p nmux-core -p nmux-proto -p nmux-server
+bash scripts/dist-rs.sh        # installer in target/release/bundle/nsis/
+```
+
+`NMUX_DATA_DIR=<folder>` runs against a separate data folder (state lives in
+`%APPDATA%/nmux-rs` otherwise, and the first run imports the Electron app's
+sessions). Agent detection rules are a reduced port of Herdr's (Apache-2.0).
+
+## Quick start (Electron version)
 
 ```bash
 pnpm install     # node-pty uses a prebuilt binary, no compiler needed

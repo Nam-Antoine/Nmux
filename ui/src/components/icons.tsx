@@ -23,6 +23,15 @@ export const Zoom = () => (
 export const Chevron = ({ open }: { open: boolean }) => (
   <svg {...base} style={{ transform: open ? 'rotate(90deg)' : undefined, transition: 'transform .12s' }}><path d="M6 4l4 4-4 4" /></svg>
 )
+export const Refresh = () => (
+  <svg {...base}><path d="M13 8a5 5 0 11-1.6-3.7M13 3v2.6h-2.6" /></svg>
+)
+export const FilesIcon = () => (
+  <svg {...base}><path d="M4 2.5h5l3 3V13a.5.5 0 01-.5.5h-7A.5.5 0 014 13zM9 2.5v3h3" /></svg>
+)
+export const PortsIcon = () => (
+  <svg {...base}><circle cx="8" cy="8" r="5.5" /><path d="M2.5 8h11M8 2.5c1.8 1.6 1.8 9.4 0 11M8 2.5c-1.8 1.6-1.8 9.4 0 11" /></svg>
+)
 export const FolderIcon = () => (
   <svg {...base}><path d="M2.5 5a1.5 1.5 0 011.5-1.5h2.2l1.3 1.5H12A1.5 1.5 0 0113.5 6.5v4.5A1.5 1.5 0 0112 12.5H4A1.5 1.5 0 012.5 11z" /></svg>
 )

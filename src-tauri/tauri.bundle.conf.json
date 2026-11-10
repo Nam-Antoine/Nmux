@@ -1,0 +1,11 @@
+{
+  "productName": "Nmux Rust",
+  "bundle": {
+    "active": true,
+    "targets": ["nsis"],
+    "publisher": "Nathan Collins",
+    "shortDescription": "A desktop home for Claude Code sessions",
+    "resources": { "../target/release/nmux-server.exe": "nmux-server.exe" },
+    "windows": { "nsis": { "installMode": "currentUser" } }
+  }
+}

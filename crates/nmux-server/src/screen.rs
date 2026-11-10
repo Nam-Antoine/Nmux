@@ -69,6 +69,11 @@ impl Screen {
         (row + 1, col + 1)
     }
 
+    /// Whether the program in the pane asked for pastes to be marked as such.
+    pub fn bracketed_paste(&self) -> bool {
+        self.parser.screen().bracketed_paste()
+    }
+
     /// Visible text, one line per row. What agent detection reads.
     pub fn text(&self) -> String {
         self.parser.screen().contents()

@@ -146,3 +146,50 @@ async fn a_wrong_token_is_turned_away() {
     client.call(Op::Shutdown).await.unwrap();
     let _ = tokio::time::timeout(Duration::from_secs(10), server).await;
 }
+
+/// A port opened by something running in a pane is listed under that pane,
+/// and files are only served from inside the workspace.
+#[cfg(windows)]
+#[tokio::test(flavor = "multi_thread")]
+async fn ports_and_files_belong_to_their_workspace() {
+    let dir = tempfile::tempdir().unwrap();
+    let project = dir.path().join("project");
+    std::fs::create_dir_all(project.join("src")).unwrap();
+    std::fs::write(project.join("src").join("main.rs"), "fn main() {}\n").unwrap();
+    std::fs::write(dir.path().join("outside.txt"), "private").unwrap();
+    let (server, client, mut events) = start(dir.path()).await;
+
+    let created = match client
+        .call(Op::CreateWorkspace { name: None, cwd: project.to_string_lossy().into_owned(), pane: PaneSpec::new(PaneKind::Shell) })
+        .await
+        .unwrap()
+    {
+        Reply::Created { created } => created,
+        other => panic!("{other:?}"),
+    };
+    let pane = created.pane;
+
+    match client.call(Op::ListDir { path: project.to_string_lossy().into_owned() }).await.unwrap() {
+        Reply::Dir { entries, .. } => assert_eq!(entries.iter().map(|e| e.name.as_str()).collect::<Vec<_>>(), ["src"]),
+        other => panic!("{other:?}"),
+    }
+    let outside = Op::ReadFile { path: dir.path().join("outside.txt").to_string_lossy().into_owned() };
+    assert!(client.call(outside).await.unwrap_err().contains("outside"));
+
+    // Listen on a free port from inside the shell and print which one.
+    let script = "$l=[System.Net.Sockets.TcpListener]::new([System.Net.IPAddress]::Loopback,0);$l.Start();'po'+'rt='+$l.LocalEndpoint.Port+'=o'+'k'\r";
+    client.call(Op::Write { pane, data: script.into() }).await.unwrap();
+    let seen = wait_output(&mut events, pane, "=ok").await;
+    let port: u16 = seen.rsplit("port=").next().unwrap().split('=').next().unwrap().parse().unwrap();
+
+    let ports = match client.call(Op::ListPorts).await.unwrap() {
+        Reply::Ports { ports } => ports,
+        other => panic!("{other:?}"),
+    };
+    let mine = ports.iter().find(|p| p.port == port).unwrap_or_else(|| panic!("port {port} not in {} ports; seen {seen:?}", ports.len()));
+    assert_eq!(mine.pane, Some(pane), "{mine:?}");
+    assert_eq!(ports[0].pane, Some(pane), "ports of panes come first");
+
+    client.call(Op::Shutdown).await.unwrap();
+    let _ = tokio::time::timeout(Duration::from_secs(10), server).await;
+}

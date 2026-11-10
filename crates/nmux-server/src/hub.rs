@@ -14,6 +14,8 @@ use nmux_proto::{Event, Op, Reply, Snapshot};
 use tokio::sync::{broadcast, watch};
 
 use crate::cloud_id::CloudIdSniffer;
+use crate::files;
+use crate::ports::{self, Forwards};
 use crate::launch::{self, ClaudeOptions};
 use crate::persist;
 use crate::pty::PtyProcess;
@@ -54,6 +56,7 @@ pub struct Hub {
     inner: Mutex<Inner>,
     events: broadcast::Sender<Arc<Event>>,
     config: Config,
+    forwards: Forwards,
     pub shutdown: watch::Sender<bool>,
 }
 
@@ -83,7 +86,15 @@ impl Hub {
             legacy.unwrap_or_default()
         });
         let (events, _) = broadcast::channel(4096);
+        let forward_events = events.clone();
+        let forwards = Forwards::load(
+            &config.data_dir,
+            Arc::new(move |forwards| {
+                let _ = forward_events.send(Arc::new(Event::Forwards { forwards }));
+            }),
+        );
         Arc::new(Hub {
+            forwards,
             inner: Mutex::new(Inner {
                 state,
                 runtimes: HashMap::new(),
@@ -122,6 +133,12 @@ impl Hub {
 
     /// Run one client request.
     pub fn handle(self: &Arc<Self>, op: Op) -> Result<Reply, String> {
+        // Anything that touches the disk, the network or another program runs
+        // without the lock, so a slow folder cannot freeze every terminal.
+        let op = match self.handle_unlocked(op)? {
+            Ok(reply) => return Ok(reply),
+            Err(op) => op,
+        };
         let mut graveyard = Graveyard::new();
         let result = {
             let mut inner = self.lock();
@@ -131,10 +148,74 @@ impl Hub {
         result
     }
 
+    fn workspace_roots(&self) -> Vec<String> {
+        self.lock().state.workspaces.iter().map(|w| w.cwd.clone()).collect()
+    }
+
+    /// `Ok(Err(op))` hands back an op that is not handled here.
+    fn handle_unlocked(&self, op: Op) -> Result<Result<Reply, Op>, String> {
+        let forwards = |forwards: Vec<nmux_proto::Forward>| {
+            self.emit(Event::Forwards { forwards: forwards.clone() });
+            Reply::Forwards { forwards }
+        };
+        Ok(Ok(match op {
+            Op::ListDir { path } => {
+                let (path, entries) = files::list_dir(&path, &self.workspace_roots())?;
+                Reply::Dir { path, entries }
+            }
+            Op::ReadFile { path } => Reply::File { file: files::read_file(&path, &self.workspace_roots())? },
+            Op::CheckPath { path } => {
+                Reply::Path { path: files::display(&files::resolve_inside(&path, &self.workspace_roots())?) }
+            }
+            Op::PasteImage { pane, data, .. } => {
+                if !self.lock().runtimes.get(&pane).is_some_and(|rt| rt.process.is_some()) {
+                    return Err("that pane is not running".into());
+                }
+                let path = files::stage_pasted_image(&self.config.data_dir, &data)?;
+                let text = files::display(&path);
+                let inner = self.lock();
+                if let Some(rt) = inner.runtimes.get(&pane) {
+                    if let Some(process) = &rt.process {
+                        // As a paste, so the agent sees one path and not keystrokes.
+                        if rt.screen.bracketed_paste() {
+                            process.write(format!("\x1b[200~{text}\x1b[201~").as_bytes());
+                        } else {
+                            process.write(text.as_bytes());
+                        }
+                    }
+                }
+                Reply::Path { path: text }
+            }
+            Op::ListPorts => {
+                let roots: HashMap<u32, PaneId> = self
+                    .lock()
+                    .runtimes
+                    .iter()
+                    .filter_map(|(id, rt)| rt.process.as_ref().and_then(|p| p.pid).map(|pid| (pid, *id)))
+                    .collect();
+                Reply::Ports { ports: ports::listening(&roots) }
+            }
+            Op::ListForwards => Reply::Forwards { forwards: self.forwards.list() },
+            Op::StartForward { host, remote_port, local_port } => forwards(self.forwards.start(host.trim(), remote_port, local_port)?),
+            Op::StopForward { id } => forwards(self.forwards.stop(id)?),
+            Op::RemoveForward { id } => forwards(self.forwards.remove(id)?),
+            other => return Ok(Err(other)),
+        }))
+    }
+
     fn handle_locked(self: &Arc<Self>, inner: &mut Inner, op: Op, graveyard: &mut Graveyard) -> Result<Reply, String> {
         let e = |err: nmux_core::ModelError| err.to_string();
         match op {
             Op::Hello { .. } => Err("already connected".into()),
+            Op::ListDir { .. }
+            | Op::ReadFile { .. }
+            | Op::CheckPath { .. }
+            | Op::PasteImage { .. }
+            | Op::ListPorts
+            | Op::ListForwards
+            | Op::StartForward { .. }
+            | Op::StopForward { .. }
+            | Op::RemoveForward { .. } => Err("handled elsewhere".into()),
             Op::GetState => Ok(Reply::State { state: inner.state.clone() }),
 
             Op::CreateWorkspace { name, cwd, pane } => {
@@ -278,6 +359,7 @@ impl Hub {
                 Ok(Reply::Done)
             }
             Op::Shutdown => {
+                self.forwards.stop_all();
                 for rt in inner.runtimes.values_mut() {
                     graveyard.extend(rt.process.take());
                 }

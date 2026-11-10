@@ -4,6 +4,7 @@ import { App } from './components/App'
 import { installGlobalKeys } from './keys'
 import { start } from './store'
 import './styles.css'
+import './panel.css'
 
 installGlobalKeys()
 void start()
