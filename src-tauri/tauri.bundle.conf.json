@@ -1,5 +1,5 @@
 {
-  "productName": "Nmux Rust",
+  "productName": "Nmux",
   "bundle": {
     "active": true,
     "targets": ["nsis"],

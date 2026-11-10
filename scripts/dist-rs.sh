@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # Builds the Rust Nmux installer into target/release/bundle/nsis/.
 #
-# The product is called "Nmux Rust" while the Electron Nmux is still the
-# installed app, so the two can sit side by side.
+# Installs to %LOCALAPPDATA%/Nmux, next to the Electron Nmux in
+# %LOCALAPPDATA%/Programs/Nmux, and takes over the "Nmux" Start menu shortcut.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
