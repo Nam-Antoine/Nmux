@@ -139,6 +139,8 @@ fn may_wait(op: &Op) -> bool {
         op,
         Op::CheckMachine { .. }
             | Op::ListMachinePorts { .. }
+            | Op::GitChanges { .. }
+            | Op::GitDiff { .. }
             | Op::ListPorts
             | Op::ListDir { .. }
             | Op::ReadFile { .. }

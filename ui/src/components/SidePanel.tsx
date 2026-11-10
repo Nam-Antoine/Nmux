@@ -2,8 +2,8 @@ import { useCallback, useEffect, useState } from 'react'
 import { call, openLocalPort, openPath, revealPath } from '../api'
 import { activeTab, activeWorkspace, getStore, run, toast, update, useStore, workspacePanes } from '../store'
 import { terminals } from '../terminals'
-import type { DirEntry, FilePreview, Forward, ListeningPort, Machine } from '../types'
-import { Chevron, Close, FolderIcon, Plus, Refresh } from './icons'
+import type { ChangedFile, DirEntry, FilePreview, Forward, GitChanges, ListeningPort, Machine } from '../types'
+import { BranchIcon, Chevron, Close, FolderIcon, Plus, Refresh } from './icons'
 
 function join(dir: string, name: string): string {
   const sep = dir.includes('\\') ? '\\' : '/'
@@ -406,6 +406,121 @@ function Ports(): React.JSX.Element {
   )
 }
 
+const STATUS_LETTER: Record<ChangedFile['status'], string> = { modified: 'M', added: 'A', deleted: 'D', renamed: 'R', untracked: 'U' }
+
+function Diff({ workspace, file, onClose }: { workspace: number; file: ChangedFile; onClose: () => void }): React.JSX.Element {
+  const [diff, setDiff] = useState<{ text: string; truncated: boolean } | null>(null)
+  const [error, setError] = useState<string | null>(null)
+
+  useEffect(() => {
+    let gone = false
+    setDiff(null)
+    setError(null)
+    call({ op: 'gitDiff', workspace, path: file.path, untracked: file.status === 'untracked' })
+      .then((reply) => !gone && reply.kind === 'diff' && setDiff({ text: reply.diff, truncated: reply.truncated }))
+      .catch((err) => !gone && setError(String(err)))
+    return () => {
+      gone = true
+    }
+  }, [workspace, file.path, file.status, file.added, file.removed])
+
+  const lines = diff?.text.split('\n') ?? []
+  const start = Math.max(0, lines.findIndex((l) => l.startsWith('@@')))
+  return (
+    <div className="preview">
+      <div className="preview-head">
+        <span className="preview-name" title={file.path}>{file.path.split('/').pop()}</span>
+        <span className="grow" />
+        <button className="btn small-btn" title="Type this path into the focused pane" onClick={() => insertPath(file.path)}>
+          Insert path
+        </button>
+        <button className="icon-btn" title="Close" onClick={onClose}>
+          <Close />
+        </button>
+      </div>
+      <div className="preview-body">
+        {error && <div className="tree-note">{error}</div>}
+        {!diff && !error && <div className="tree-note">Loading…</div>}
+        {diff && lines.length <= 1 && <div className="tree-note">No text changes to show.</div>}
+        {diff && lines.length > 1 && (
+          <pre className="diff">
+            {lines.slice(start).map((line, i) => (
+              <span key={i} className={line.startsWith('@@') ? 'hunk' : line.startsWith('+') ? 'plus' : line.startsWith('-') ? 'minus' : undefined}>
+                {line + '\n'}
+              </span>
+            ))}
+            {diff.truncated && '\n… (only the start of this diff is shown)'}
+          </pre>
+        )}
+      </div>
+    </div>
+  )
+}
+
+function Changes(): React.JSX.Element {
+  const ws = useStore(activeWorkspace)
+  const [changes, setChanges] = useState<GitChanges | null>(null)
+  const [problem, setProblem] = useState<string | null>(null)
+  const [selected, setSelected] = useState<string | null>(null)
+  const id = ws?.id
+  const remote = ws?.machine !== undefined
+
+  const refresh = useCallback(() => {
+    if (id === undefined) return
+    call({ op: 'gitChanges', workspace: id })
+      .then((reply) => {
+        if (reply.kind !== 'changes') return
+        setChanges(reply.changes)
+        setProblem(null)
+      })
+      .catch((err) => setProblem(String(err)))
+  }, [id])
+  useEffect(() => {
+    setChanges(null)
+    setSelected(null)
+    refresh()
+    const timer = window.setInterval(() => !document.hidden && refresh(), remote ? 15_000 : 4000)
+    return () => window.clearInterval(timer)
+  }, [refresh, remote])
+
+  if (id === undefined) return <div className="tree-note">Open a workspace to see its changes.</div>
+  const file = changes?.files.find((f) => f.path === selected)
+  return (
+    <>
+      <div className="panel-section">
+        <BranchIcon />
+        <span className="branch">{changes?.branch ?? (problem ? 'No repository' : '…')}</span>
+        {changes && changes.ahead > 0 && <span className="muted">↑{changes.ahead}</span>}
+        {changes && changes.behind > 0 && <span className="muted">↓{changes.behind}</span>}
+        <span className="grow" />
+        {changes && <span className="count">{changes.files.length}</span>}
+        <button className="icon-btn" title="Look again" onClick={refresh}>
+          <Refresh />
+        </button>
+      </div>
+      <div className="tree">
+        {problem && <div className="tree-note">{problem}</div>}
+        {!problem && changes === null && <div className="tree-note">Loading…</div>}
+        {!problem && changes?.files.length === 0 && <div className="tree-note">No changes. The working tree matches the last commit.</div>}
+        {!problem &&
+          changes?.files.map((f) => {
+            const cut = f.path.lastIndexOf('/') + 1
+            return (
+              <div key={f.path} className={`tree-row change${f.path === selected ? ' active' : ''}`} title={`${f.status}: ${f.path}`} onClick={() => setSelected(f.path === selected ? null : f.path)}>
+                <span className={`change-status ${f.status}`}>{STATUS_LETTER[f.status]}</span>
+                <span className="change-name">{f.path.slice(cut)}</span>
+                <span className="change-dir">{f.path.slice(0, cut)}</span>
+                {f.added !== undefined && f.added > 0 && <span className="plus">+{f.added}</span>}
+                {f.removed !== undefined && f.removed > 0 && <span className="minus">−{f.removed}</span>}
+              </div>
+            )
+          })}
+      </div>
+      {file && <Diff workspace={id} file={file} onClose={() => setSelected(null)} />}
+    </>
+  )
+}
+
 export function SidePanel(): React.JSX.Element | null {
   const panel = useStore((s) => s.panel)
   const machine = useStore((s) => s.state.machines.find((m) => m.id === activeWorkspace(s)?.machine))
@@ -420,13 +535,18 @@ export function SidePanel(): React.JSX.Element | null {
           <button className={panel === 'ports' ? 'on' : ''} onClick={() => update({ panel: 'ports' })}>
             Ports
           </button>
+          <button className={panel === 'changes' ? 'on' : ''} onClick={() => update({ panel: 'changes' })}>
+            Changes
+          </button>
         </div>
         <span className="grow" />
         <button className="icon-btn" title="Close panel" onClick={() => update({ panel: null })}>
           <Close />
         </button>
       </div>
-      {panel === 'files' ? <Files /> : machine ? <MachinePorts key={machine.id} machine={machine} /> : <Ports />}
+      <div className="panel-view" key={panel}>
+        {panel === 'files' ? <Files /> : panel === 'changes' ? <Changes /> : machine ? <MachinePorts key={machine.id} machine={machine} /> : <Ports />}
+      </div>
     </aside>
   )
 }

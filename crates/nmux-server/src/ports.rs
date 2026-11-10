@@ -9,7 +9,7 @@ use nmux_core::PaneId;
 use nmux_proto::{Forward, ForwardState, ListeningPort};
 use serde::{Deserialize, Serialize};
 
-fn quiet(command: &mut Command) -> &mut Command {
+pub(crate) fn quiet(command: &mut Command) -> &mut Command {
     #[cfg(windows)]
     {
         use std::os::windows::process::CommandExt;

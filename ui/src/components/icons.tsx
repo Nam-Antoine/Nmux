@@ -21,7 +21,7 @@ export const Zoom = () => (
   <svg {...base}><path d="M9.5 3h3.5v3.5M6.5 13H3V9.5M13 3L9 7M3 13l4-4" /></svg>
 )
 export const Chevron = ({ open }: { open: boolean }) => (
-  <svg {...base} style={{ transform: open ? 'rotate(90deg)' : undefined, transition: 'transform .12s' }}><path d="M6 4l4 4-4 4" /></svg>
+  <svg {...base} style={{ transform: open ? 'rotate(90deg)' : undefined, transition: 'transform var(--t-med) var(--ease-out)' }}><path d="M6 4l4 4-4 4" /></svg>
 )
 export const Refresh = () => (
   <svg {...base}><path d="M13 8a5 5 0 11-1.6-3.7M13 3v2.6h-2.6" /></svg>
@@ -31,6 +31,9 @@ export const FilesIcon = () => (
 )
 export const PortsIcon = () => (
   <svg {...base}><circle cx="8" cy="8" r="5.5" /><path d="M2.5 8h11M8 2.5c1.8 1.6 1.8 9.4 0 11M8 2.5c-1.8 1.6-1.8 9.4 0 11" /></svg>
+)
+export const BranchIcon = () => (
+  <svg {...base}><circle cx="4.5" cy="3.8" r="1.5" /><circle cx="4.5" cy="12.2" r="1.5" /><circle cx="11.5" cy="5.8" r="1.5" /><path d="M4.5 5.3v5.4M11.5 7.3c0 2.4-3.2 2.2-7 3.4" /></svg>
 )
 export const FolderIcon = () => (
   <svg {...base}><path d="M2.5 5a1.5 1.5 0 011.5-1.5h2.2l1.3 1.5H12A1.5 1.5 0 0113.5 6.5v4.5A1.5 1.5 0 0112 12.5H4A1.5 1.5 0 012.5 11z" /></svg>

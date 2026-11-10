@@ -1,6 +1,7 @@
 pub mod client;
 pub mod cloud_id;
 pub mod files;
+pub mod git;
 pub mod hub;
 pub mod launch;
 pub mod persist;

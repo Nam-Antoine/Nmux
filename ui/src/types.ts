@@ -111,6 +111,8 @@ export type Op =
   | { op: 'pasteImage'; pane: PaneId; extension: string; data: string }
   | { op: 'listPorts' }
   | { op: 'listMachinePorts'; machine: MachineId }
+  | { op: 'gitChanges'; workspace: WorkspaceId }
+  | { op: 'gitDiff'; workspace: WorkspaceId; path: string; untracked: boolean }
   | { op: 'listForwards' }
   | { op: 'startForward'; host: string; remotePort: number; localPort?: number }
   | { op: 'stopForward'; id: number }
@@ -132,6 +134,20 @@ export interface FilePreview {
   path: string
   size: number
   content: FileContent
+}
+
+export interface ChangedFile {
+  path: string
+  status: 'modified' | 'added' | 'deleted' | 'renamed' | 'untracked'
+  added?: number
+  removed?: number
+}
+
+export interface GitChanges {
+  branch?: string
+  ahead: number
+  behind: number
+  files: ChangedFile[]
 }
 
 export interface ListeningPort {
@@ -170,6 +186,8 @@ export type Reply =
   | { kind: 'file'; file: FilePreview }
   | { kind: 'path'; path: string }
   | { kind: 'ports'; ports: ListeningPort[] }
+  | { kind: 'changes'; changes: GitChanges }
+  | { kind: 'diff'; diff: string; truncated: boolean }
   | { kind: 'forwards'; forwards: Forward[] }
 
 export type ServerEvent =

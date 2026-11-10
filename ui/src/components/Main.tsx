@@ -1,10 +1,11 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { appWindow, openCloudUrl } from '../api'
-import { activeTab, activeWorkspace, leaves, rollup, run, tabLabel, update, useStore } from '../store'
+import { activeTab, activeWorkspace, leaves, rollup, run, tabLabel, togglePanel, update, useStore } from '../store'
 import { terminals } from '../terminals'
 import type { LayoutNode, Pane, PaneId, Tab, Workspace } from '../types'
-import { Close, FilesIcon, FolderIcon, KIND_LABEL, KindIcon, Monitor, Play, Plus, ServerIcon, PortsIcon, SidebarIcon, SplitDown, SplitRight, StateDot, WinClose, WinMax, WinMin, Zoom } from './icons'
+import { BranchIcon, Close, FilesIcon, FolderIcon, KIND_LABEL, KindIcon, Monitor, Play, Plus, ServerIcon, PortsIcon, SidebarIcon, SplitDown, SplitRight, StateDot, WinClose, WinMax, WinMin, Zoom } from './icons'
 import { InlineEdit } from './InlineEdit'
+import { SidePanel } from './SidePanel'
 
 function WindowControls(): React.JSX.Element {
   return (
@@ -149,19 +150,14 @@ function TabBar({ ws, current }: { ws: Workspace; current: Tab }): React.JSX.Ele
           </>
         )}
       </div>
-      <button
-        className={`bar-btn${s.panel === 'files' ? ' on' : ''}`}
-        title="Files (Ctrl+B, f)"
-        onClick={() => update({ panel: s.panel === 'files' ? null : 'files' })}
-      >
+      <button className={`bar-btn${s.panel === 'files' ? ' on' : ''}`} title="Files (Ctrl+B, f)" onClick={() => togglePanel('files')}>
         <FilesIcon /> Files
       </button>
-      <button
-        className={`bar-btn${s.panel === 'ports' ? ' on' : ''}`}
-        title="Ports and SSH forwards (Ctrl+B, o)"
-        onClick={() => update({ panel: s.panel === 'ports' ? null : 'ports' })}
-      >
+      <button className={`bar-btn${s.panel === 'ports' ? ' on' : ''}`} title="Ports and SSH forwards (Ctrl+B, o)" onClick={() => togglePanel('ports')}>
         <PortsIcon /> Ports
+      </button>
+      <button className={`bar-btn${s.panel === 'changes' ? ' on' : ''}`} title="Git changes (Ctrl+B, g)" onClick={() => togglePanel('changes')}>
+        <BranchIcon /> Changes
       </button>
       <WindowControls />
     </div>
@@ -357,12 +353,15 @@ export function Main(): React.JSX.Element {
   return (
     <main className="main">
       <TabBar ws={ws} current={tab} />
-      <div className="tab-body" key={tab.id}>
-        {tab.zoomed ? (
-          <PaneView id={tab.focused} focused solo />
-        ) : (
-          <Tree node={tab.layout} path={[]} tab={tab} />
-        )}
+      <div className="work">
+        <div className="tab-body" key={tab.id}>
+          {tab.zoomed ? (
+            <PaneView id={tab.focused} focused solo />
+          ) : (
+            <Tree node={tab.layout} path={[]} tab={tab} />
+          )}
+        </div>
+        <SidePanel />
       </div>
       <StatusBar ws={ws} />
     </main>

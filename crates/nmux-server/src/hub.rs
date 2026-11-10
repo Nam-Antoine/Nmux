@@ -5,12 +5,13 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use nmux_core::detect;
 use nmux_core::validate;
-use nmux_core::{AgentState, Created, Dir, MachineId, MachineStatus, PaneId, PaneKind, PaneSpec, PaneStatus, State};
+use nmux_core::{AgentState, Created, Dir, MachineId, MachineStatus, PaneId, PaneKind, PaneSpec, PaneStatus, State, WorkspaceId};
 use nmux_proto::{Event, Op, Reply, Snapshot};
 use tokio::sync::{broadcast, watch};
 
 use crate::cloud_id::CloudIdSniffer;
 use crate::files;
+use crate::git;
 use crate::ports::{self, Forwards};
 use crate::launch::{self, ClaudeOptions};
 use crate::persist;
@@ -62,14 +63,14 @@ type Graveyard = Vec<PtyProcess>;
 const CURSOR_QUERY: &str = "\x1b[6n";
 const SAVE_EVERY: Duration = Duration::from_millis(500);
 
-fn remote_sessions(state: &State) -> HashMap<PaneId, (String, String)> {
+fn remote_sessions(state: &State, owner: &str) -> HashMap<PaneId, (String, String)> {
     state
         .panes
         .values()
         .filter_map(|p| {
             let machine: MachineId = p.machine?;
             let target = state.machine(machine)?.target.clone();
-            Some((p.id, (target, remote::tmux_session(p.id, p.created_at))))
+            Some((p.id, (target, remote::tmux_session(owner, p.id, p.created_at))))
         })
         .collect()
 }
@@ -152,6 +153,12 @@ impl Hub {
         result
     }
 
+    fn workspace_place(&self, workspace: WorkspaceId) -> Result<(String, Option<String>), String> {
+        let inner = self.lock();
+        let ws = inner.state.workspaces.iter().find(|w| w.id == workspace).ok_or("no such workspace")?;
+        Ok((ws.cwd.clone(), ws.machine.and_then(|m| inner.state.machine(m)).map(|m| m.target.clone())))
+    }
+
     fn workspace_roots(&self) -> Vec<String> {
         self.lock().state.workspaces.iter().map(|w| w.cwd.clone()).collect()
     }
@@ -216,6 +223,15 @@ impl Hub {
                     .collect();
                 Reply::Ports { ports }
             }
+            Op::GitChanges { workspace } => {
+                let (cwd, target) = self.workspace_place(workspace)?;
+                Reply::Changes { changes: git::Repo { cwd: &cwd, target: target.as_deref(), env: &self.config.env }.changes()? }
+            }
+            Op::GitDiff { workspace, path, untracked } => {
+                let (cwd, target) = self.workspace_place(workspace)?;
+                let (diff, truncated) = git::Repo { cwd: &cwd, target: target.as_deref(), env: &self.config.env }.diff(&path, untracked)?;
+                Reply::Diff { diff, truncated }
+            }
             Op::ListForwards => Reply::Forwards { forwards: self.forwards.list() },
             Op::StartForward { host, remote_port, local_port } => forwards(self.forwards.start(host.trim(), remote_port, local_port)?),
             Op::StopForward { id } => forwards(self.forwards.stop(id)?),
@@ -252,6 +268,8 @@ impl Hub {
             | Op::PasteImage { .. }
             | Op::ListPorts
             | Op::ListMachinePorts { .. }
+            | Op::GitChanges { .. }
+            | Op::GitDiff { .. }
             | Op::ListForwards
             | Op::StartForward { .. }
             | Op::StopForward { .. }
@@ -307,17 +325,17 @@ impl Hub {
             }
 
             Op::ClosePane { pane } => {
-                let far = remote_sessions(&inner.state);
+                let far = remote_sessions(&inner.state, &remote::owner(&self.config.env));
                 let closed = inner.state.close_pane(pane).map_err(e)?;
                 Ok(self.closed(inner, closed, far, graveyard))
             }
             Op::CloseTab { tab } => {
-                let far = remote_sessions(&inner.state);
+                let far = remote_sessions(&inner.state, &remote::owner(&self.config.env));
                 let closed = inner.state.close_tab(tab).map_err(e)?;
                 Ok(self.closed(inner, closed, far, graveyard))
             }
             Op::CloseWorkspace { workspace } => {
-                let far = remote_sessions(&inner.state);
+                let far = remote_sessions(&inner.state, &remote::owner(&self.config.env));
                 let closed = inner.state.close_workspace(workspace).map_err(e)?;
                 Ok(self.closed(inner, closed, far, graveyard))
             }
@@ -574,7 +592,7 @@ impl Hub {
                     },
                     _ => remote::Program::Shell,
                 };
-                let session = remote::tmux_session(id, pane.created_at);
+                let session = remote::tmux_session(&remote::owner(&self.config.env), id, pane.created_at);
                 remote::launch(target.as_deref().unwrap_or("removed-machine.invalid"), &remote::script(&pane.cwd, &session, &program), &env)
             }
             (None, PaneKind::Claude) => launch::claude(

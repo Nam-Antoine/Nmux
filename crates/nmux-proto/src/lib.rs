@@ -71,6 +71,8 @@ pub enum Op {
 
     ListPorts,
     ListMachinePorts { machine: MachineId },
+    GitChanges { workspace: WorkspaceId },
+    GitDiff { workspace: WorkspaceId, path: String, untracked: bool },
     ListForwards,
     #[serde(rename_all = "camelCase")]
     StartForward { host: String, remote_port: u16, local_port: Option<u16> },
@@ -115,6 +117,8 @@ pub enum Reply {
     File { file: FilePreview },
     Path { path: String },
     Ports { ports: Vec<ListeningPort> },
+    Changes { changes: GitChanges },
+    Diff { diff: String, truncated: bool },
     Forwards { forwards: Vec<Forward> },
 }
 
@@ -141,6 +145,27 @@ pub enum FileContent {
     Image { mime: String, data: String },
     Binary,
     TooLarge,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ChangedFile {
+    pub path: String,
+    pub status: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub added: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub removed: Option<u32>,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GitChanges {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub branch: Option<String>,
+    pub ahead: u32,
+    pub behind: u32,
+    pub files: Vec<ChangedFile>,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]

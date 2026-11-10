@@ -21,6 +21,10 @@
   --warn: #f2b84b;
   --danger: #f07178;
   --sidebar-w: 268px;
+  --t-fast: 110ms;
+  --t-med: 170ms;
+  --t-slow: 240ms;
+  --ease-out: cubic-bezier(0.22, 1, 0.36, 1);
   --font-ui: 'Geist Variable', 'Inter', 'Segoe UI Variable Text', 'Segoe UI', system-ui, sans-serif;
   --font-mono: 'Geist Mono Variable', 'Cascadia Mono', Consolas, 'Courier New', monospace;
 }
@@ -517,8 +521,104 @@ kbd {
   border-color: #3a3d46;
 }
 @keyframes pulse {
+  0%,
+  100% {
+    opacity: 1;
+    transform: scale(1);
+  }
   50% {
-    opacity: 0.35;
+    opacity: 0.4;
+    transform: scale(0.82);
+  }
+}
+@keyframes fade-in {
+  from {
+    opacity: 0;
+  }
+}
+@keyframes pop-in {
+  from {
+    opacity: 0;
+    transform: translateY(-4px) scale(0.97);
+  }
+}
+@keyframes rise-in {
+  from {
+    opacity: 0;
+    transform: translateY(8px) scale(0.985);
+  }
+}
+@keyframes slide-in {
+  from {
+    opacity: 0;
+    transform: translateX(-12px);
+  }
+}
+@keyframes toast-in {
+  from {
+    opacity: 0;
+    transform: translate(-50%, 8px);
+  }
+}
+
+button,
+.space-row,
+.agent-row,
+.machine-row,
+.tab,
+.tree-row,
+.port-row,
+input,
+textarea {
+  transition:
+    background-color var(--t-fast) ease-out,
+    color var(--t-fast) ease-out,
+    border-color var(--t-med) ease-out,
+    opacity var(--t-fast) ease-out,
+    box-shadow var(--t-med) ease-out;
+}
+.btn:active,
+.bar-btn:active,
+.icon-btn:active {
+  transform: scale(0.96);
+}
+.pane {
+  transition: border-color var(--t-med) ease-out;
+}
+.sidebar {
+  animation: slide-in var(--t-slow) var(--ease-out);
+}
+.space-row,
+.agent-row {
+  animation: fade-in var(--t-med) ease-out;
+}
+.menu {
+  transform-origin: top right;
+  animation: pop-in var(--t-med) var(--ease-out);
+}
+.backdrop {
+  animation: fade-in var(--t-med) ease-out;
+}
+.dialog {
+  animation: rise-in var(--t-slow) var(--ease-out);
+}
+.pane-overlay {
+  animation: fade-in var(--t-slow) ease-out;
+}
+.overlay-card {
+  animation: rise-in var(--t-slow) var(--ease-out);
+}
+.prefix-hint,
+.toast,
+.offline {
+  animation: toast-in var(--t-slow) var(--ease-out);
+}
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 1ms !important;
+    transition-duration: 1ms !important;
   }
 }
 

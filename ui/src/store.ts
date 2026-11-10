@@ -10,6 +10,12 @@ export type Dialog =
   | { type: 'help' }
   | null
 
+export type Panel = 'files' | 'ports' | 'changes'
+
+export function togglePanel(which: Panel): void {
+  update({ panel: store.panel === which ? null : which })
+}
+
 export interface Store {
   state: State
   panes: Map<PaneId, Pane>
@@ -17,7 +23,7 @@ export interface Store {
   problem: string | null
   sidebarOpen: boolean
   dialog: Dialog
-  panel: 'files' | 'ports' | null
+  panel: Panel | null
   forwards: Forward[]
   prefix: boolean
   toast: string | null

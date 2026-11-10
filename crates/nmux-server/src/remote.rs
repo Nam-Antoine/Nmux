@@ -25,11 +25,17 @@ pub enum Program<'a> {
     },
 }
 
-pub fn tmux_session(pane: PaneId, created_at_ms: u64) -> String {
-    format!("nmux-{}-{}", pane.0, created_at_ms / 1000 % 1_000_000)
+pub fn owner(env: &Env) -> String {
+    let name = env.iter().find(|(k, _)| k.eq_ignore_ascii_case("USERNAME") || k.as_str() == "USER").map(|(_, v)| v.as_str()).unwrap_or("user");
+    let clean: String = name.chars().filter(|c| c.is_ascii_alphanumeric()).take(16).collect::<String>().to_lowercase();
+    if clean.is_empty() { "user".into() } else { clean }
 }
 
-fn cd(cwd: &str) -> String {
+pub fn tmux_session(owner: &str, pane: PaneId, created_at_ms: u64) -> String {
+    format!("nmux-{owner}-{}-{}", pane.0, created_at_ms / 1000 % 1_000_000)
+}
+
+pub(crate) fn cd(cwd: &str) -> String {
     if cwd == "~" {
         "cd".to_string()
     } else if let Some(rest) = cwd.strip_prefix("~/") {
@@ -116,7 +122,7 @@ fn unattended(target: &str, remote_command: &str, env: &Env) -> Command {
     command
 }
 
-fn last_line(stderr: &[u8], fallback: &str) -> String {
+pub(crate) fn last_line(stderr: &[u8], fallback: &str) -> String {
     let text = String::from_utf8_lossy(stderr);
     text.lines().map(str::trim).filter(|l| !l.is_empty()).last().unwrap_or(fallback).chars().take(300).collect()
 }
@@ -176,10 +182,13 @@ pub fn read_listeners(text: &str) -> Vec<(String, u16, String)> {
     found
 }
 
-pub fn listening(target: &str, env: &Env) -> Result<Vec<(String, u16, String)>, String> {
-    let script = "ss -Hltnp 2>/dev/null || netstat -ltn 2>/dev/null; echo nmux-ok";
+pub fn output(target: &str, script: &str, env: &Env) -> Result<std::process::Output, String> {
     let command = format!("sh -c {}", sh_quote(script));
-    let out = unattended(target, &command, env).stdin(Stdio::null()).output().map_err(|e| format!("could not run ssh: {e}"))?;
+    unattended(target, &command, env).stdin(Stdio::null()).output().map_err(|e| format!("could not run ssh: {e}"))
+}
+
+pub fn listening(target: &str, env: &Env) -> Result<Vec<(String, u16, String)>, String> {
+    let out = output(target, "ss -Hltnp 2>/dev/null || netstat -ltn 2>/dev/null; echo nmux-ok", env)?;
     let stdout = String::from_utf8_lossy(&out.stdout);
     if !stdout.lines().any(|l| l.trim() == "nmux-ok") {
         return Err(last_line(&out.stderr, "ssh gave no reason"));
@@ -224,6 +233,14 @@ pub fn upload(target: &str, name: &str, bytes: &[u8], env: &Env) -> Result<Strin
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn sessions_carry_the_name_of_who_started_them() {
+        let env: Env = [("USERNAME".to_string(), "Nam Tran!".to_string())].into();
+        assert_eq!(owner(&env), "namtran");
+        assert_eq!(owner(&Env::new()), "user");
+        assert_eq!(tmux_session("namtran", PaneId(7), 1_794_307_748_733), "nmux-namtran-7-307748");
+    }
 
     #[test]
     fn quoting_survives_quotes_and_spaces() {
