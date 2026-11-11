@@ -1,4 +1,4 @@
-import type { AgentState, PaneKind } from '../types'
+import type { AgentState, Pane, PaneKind } from '../types'
 
 const base = { width: 16, height: 16, viewBox: '0 0 16 16', fill: 'none', stroke: 'currentColor', strokeWidth: 1.4, strokeLinecap: 'round', strokeLinejoin: 'round' } as const
 
@@ -25,6 +25,9 @@ export const Zoom = () => (
 )
 export const Chevron = ({ open }: { open: boolean }) => (
   <svg {...base} style={{ transform: open ? 'rotate(90deg)' : undefined, transition: 'transform var(--t-med) var(--ease-out)' }}><path d="M6 4l4 4-4 4" /></svg>
+)
+export const Up = () => (
+  <svg {...base}><path d="M8 12.5v-9M4.5 7L8 3.5 11.5 7" /></svg>
 )
 export const Refresh = () => (
   <svg {...base}><path d="M13 8a5 5 0 11-1.6-3.7M13 3v2.6h-2.6" /></svg>
@@ -93,6 +96,8 @@ export function KindIcon({ kind }: { kind: PaneKind }): React.JSX.Element {
     </svg>
   )
 }
+
+export const shownKind = (pane: Pane): PaneKind => (pane.runsClaude ? 'claude' : pane.kind)
 
 export const KIND_LABEL: Record<PaneKind, string> = { claude: 'Claude Code', shell: 'Shell', cloud: 'Cloud' }
 

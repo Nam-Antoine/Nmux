@@ -41,6 +41,7 @@ export interface Pane {
   cloudUrl?: string
   teleportedFrom?: string
   machine?: MachineId
+  runsClaude?: boolean
   createdAt: number
 }
 
@@ -109,8 +110,8 @@ export type Op =
   | { op: 'write'; pane: PaneId; data: string }
   | { op: 'resize'; pane: PaneId; cols: number; rows: number }
   | { op: 'setWindowVisible'; visible: boolean }
-  | { op: 'listDir'; path: string }
-  | { op: 'readFile'; path: string }
+  | { op: 'listDir'; path: string; machine?: MachineId }
+  | { op: 'readFile'; path: string; machine?: MachineId }
   | { op: 'pasteImage'; pane: PaneId; extension: string; data: string }
   | { op: 'listPorts' }
   | { op: 'listMachinePorts'; machine: MachineId }

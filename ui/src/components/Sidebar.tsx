@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { rollup, run, update, useStore, workspacePanes } from '../store'
 import type { AgentState, Machine, Pane, Workspace } from '../types'
-import { Avatar, Chevron, Clock, Close, FilesIcon, Keyboard, Pencil, PortsIcon, KindIcon, Monitor, Play, Plus, Search, ServerIcon, SidebarIcon, StateDot } from './icons'
+import { Avatar, Chevron, Clock, Close, FilesIcon, Keyboard, Pencil, PortsIcon, KindIcon, Monitor, Play, Plus, Search, ServerIcon, SidebarIcon, shownKind, StateDot } from './icons'
 import { ContextMenu } from './ContextMenu'
 import { InlineEdit } from './InlineEdit'
 
@@ -117,6 +117,7 @@ const MACHINE_TITLE: Record<Machine['status'], string> = {
 function MachineGroup({ machine, spaces, activeId, running }: { machine?: Machine; spaces: Workspace[]; activeId?: number; running: boolean }): React.JSX.Element {
   const [open, setOpen] = useState(true)
   const [renaming, setRenaming] = useState(false)
+  const [menu, setMenu] = useState<{ x: number; y: number } | null>(null)
   const add = (): void => update({ dialog: { type: 'workspace', machine: machine?.id } })
   const status = machine?.status ?? 'online'
   const trouble = status === 'auth' || status === 'error'
@@ -133,8 +134,26 @@ function MachineGroup({ machine, spaces, activeId, running }: { machine?: Machin
         className={`machine-row${trouble ? ' trouble' : ''}`}
         onClick={() => setOpen(!open)}
         onDoubleClick={() => machine && setRenaming(true)}
+        onContextMenu={(e) => {
+          if (!machine) return
+          e.preventDefault()
+          setMenu({ x: e.clientX, y: e.clientY })
+        }}
         title={machine ? `ssh ${machine.target}${machine.detail ? `\n${machine.detail}` : ''}` : undefined}
       >
+        {menu && (
+          <ContextMenu at={menu} onClose={() => setMenu(null)}>
+            <button onClick={add}>
+              <Plus /> New workspace
+            </button>
+            <button onClick={() => setRenaming(true)}>
+              <Pencil /> Rename
+            </button>
+            <button className="danger" onClick={remove}>
+              <Close /> Remove machine
+            </button>
+          </ContextMenu>
+        )}
         {machine ? <ServerIcon /> : <Monitor />}
         {machine && renaming ? (
           <InlineEdit
@@ -146,18 +165,6 @@ function MachineGroup({ machine, spaces, activeId, running }: { machine?: Machin
           />
         ) : (
           <span className="machine-name">{machine ? machine.label : 'This computer'}</span>
-        )}
-        {machine && (
-          <button
-            className="icon-btn machine-remove"
-            title="Remove this machine"
-            onClick={(e) => {
-              e.stopPropagation()
-              remove()
-            }}
-          >
-            <Close />
-          </button>
         )}
         <button
           className="icon-btn"
@@ -216,7 +223,7 @@ function AgentRow({ pane, where, focused }: { pane: Pane; where: string; focused
       onClick={() => void run({ op: 'focusPane', pane: pane.id })}
       title={pane.cwd}
     >
-      <KindIcon kind={pane.kind} />
+      <KindIcon kind={shownKind(pane)} />
       <span className="agent-name">{pane.name}</span>
       <span className="agent-where">{where}</span>
       <span className="agent-age" title="Time since this agent was created">{age(pane.createdAt)}</span>
@@ -251,7 +258,7 @@ function Agents({ filter }: { filter: string }): React.JSX.Element {
     if (ws.id === s.state.activeWorkspace) focused = ws.tabs.find((t) => t.id === ws.activeTab)?.focused
   }
   const agents = s.state.panes.filter(
-    (p) => p.kind !== 'shell' && (!filter || `${p.name} ${where.get(p.id) ?? ''}`.toLowerCase().includes(filter))
+    (p) => shownKind(p) !== 'shell' && (!filter || `${p.name} ${where.get(p.id) ?? ''}`.toLowerCase().includes(filter))
   )
   const stopped = agents.filter((p) => p.status === 'exited').length
 

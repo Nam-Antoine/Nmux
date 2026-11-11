@@ -68,8 +68,16 @@ pub enum Op {
     SendText { pane: PaneId, text: String },
     Resize { pane: PaneId, cols: u16, rows: u16 },
 
-    ListDir { path: String },
-    ReadFile { path: String },
+    ListDir {
+        path: String,
+        #[serde(default)]
+        machine: Option<MachineId>,
+    },
+    ReadFile {
+        path: String,
+        #[serde(default)]
+        machine: Option<MachineId>,
+    },
     CheckPath { path: String },
     PasteImage { pane: PaneId, extension: String, data: String },
 

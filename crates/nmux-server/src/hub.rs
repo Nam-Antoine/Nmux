@@ -42,12 +42,14 @@ struct Inner {
     window_visible: bool,
     save_dirty: bool,
     last_save: Instant,
+    ticks: u32,
 }
 
 pub struct Hub {
     inner: Mutex<Inner>,
     events: broadcast::Sender<Arc<Event>>,
     config: Config,
+    processes: Mutex<sysinfo::System>,
     forwards: Forwards,
     pub shutdown: watch::Sender<bool>,
 }
@@ -62,6 +64,7 @@ type Graveyard = Vec<PtyProcess>;
 
 const CURSOR_QUERY: &str = "\x1b[6n";
 const SAVE_EVERY: Duration = Duration::from_millis(500);
+const SHELL_CHECK_TICKS: u32 = 8;
 
 fn remote_sessions(state: &State, owner: &str) -> HashMap<PaneId, (String, String)> {
     state
@@ -106,9 +109,11 @@ impl Hub {
                 window_visible: true,
                 save_dirty: false,
                 last_save: Instant::now(),
+                ticks: 0,
             }),
             events,
             config,
+            processes: Mutex::new(sysinfo::System::new()),
             shutdown: watch::Sender::new(false),
         })
     }
@@ -154,6 +159,10 @@ impl Hub {
         Ok((ws.cwd.clone(), ws.machine.and_then(|m| inner.state.machine(m)).map(|m| m.target.clone())))
     }
 
+    fn machine_target(&self, machine: MachineId) -> Result<String, String> {
+        Ok(self.lock().state.machine(machine).ok_or("no such machine")?.target.clone())
+    }
+
     fn workspace_roots(&self) -> Vec<String> {
         self.lock().state.workspaces.iter().map(|w| w.cwd.clone()).collect()
     }
@@ -164,11 +173,19 @@ impl Hub {
             Reply::Forwards { forwards }
         };
         Ok(Ok(match op {
-            Op::ListDir { path } => {
-                let (path, entries) = files::list_dir(&path, &self.workspace_roots())?;
+            Op::ListDir { path, machine } => {
+                let (path, entries) = match machine {
+                    Some(machine) => remote::list_dir(&self.machine_target(machine)?, &validate::remote_cwd(&path).map_err(|r| r.0)?, &self.config.env)?,
+                    None => files::list_dir(&path, &self.workspace_roots())?,
+                };
                 Reply::Dir { path, entries }
             }
-            Op::ReadFile { path } => Reply::File { file: files::read_file(&path, &self.workspace_roots())? },
+            Op::ReadFile { path, machine } => Reply::File {
+                file: match machine {
+                    Some(machine) => remote::read_file(&self.machine_target(machine)?, &validate::remote_cwd(&path).map_err(|r| r.0)?, &self.config.env)?,
+                    None => files::read_file(&path, &self.workspace_roots())?,
+                },
+            },
             Op::CheckPath { path } => {
                 Reply::Path { path: files::display(&files::resolve_inside(&path, &self.workspace_roots())?) }
             }
@@ -211,8 +228,7 @@ impl Hub {
                 Reply::Ports { ports: ports::listening(&roots) }
             }
             Op::ListMachinePorts { machine } => {
-                let target = self.lock().state.machine(machine).ok_or("no such machine")?.target.clone();
-                let ports = remote::listening(&target, &self.config.env)?
+                let ports = remote::listening(&self.machine_target(machine)?, &self.config.env)?
                     .into_iter()
                     .map(|(address, port, process)| nmux_proto::ListeningPort { port, address, pid: 0, process, pane: None })
                     .collect();
@@ -729,7 +745,42 @@ impl Hub {
         drop(process);
     }
 
+    fn watch_shells(&self) {
+        let roots: HashMap<u32, PaneId> = {
+            let mut inner = self.lock();
+            inner.ticks = inner.ticks.wrapping_add(1);
+            if inner.ticks % SHELL_CHECK_TICKS != 0 {
+                return;
+            }
+            inner
+                .runtimes
+                .iter()
+                .filter(|(id, _)| inner.state.panes.get(id).is_some_and(|p| p.kind == PaneKind::Shell && p.machine.is_none()))
+                .filter_map(|(id, rt)| rt.process.as_ref().and_then(|p| p.pid).map(|pid| (pid, *id)))
+                .collect()
+        };
+        if roots.is_empty() {
+            return;
+        }
+        let found = ports::running_claude(&mut self.processes.lock().unwrap_or_else(|poisoned| poisoned.into_inner()), &roots);
+        let mut inner = self.lock();
+        let inner = &mut *inner;
+        let mut changed = false;
+        for id in roots.values() {
+            if inner.state.set_runs_claude(*id, found.contains(id)) {
+                changed = true;
+                if let Some(rt) = inner.runtimes.get_mut(id) {
+                    rt.detect_dirty = true;
+                }
+            }
+        }
+        if changed {
+            self.changed(inner);
+        }
+    }
+
     pub fn tick(&self) {
+        self.watch_shells();
         let to_save = {
             let mut inner = self.lock();
             let inner = &mut *inner;
@@ -739,7 +790,7 @@ impl Hub {
                     continue;
                 }
                 let Some(pane) = inner.state.panes.get(id) else { continue };
-                if pane.kind != PaneKind::Claude {
+                if pane.shown_kind() != PaneKind::Claude {
                     continue;
                 }
                 let Some(detected) = detect::classify(rt.screen.title.as_deref(), &rt.screen.text()) else { continue };

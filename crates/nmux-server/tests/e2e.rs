@@ -166,11 +166,11 @@ async fn ports_and_files_belong_to_their_workspace() {
     };
     let pane = created.pane;
 
-    match client.call(Op::ListDir { path: project.to_string_lossy().into_owned() }).await.unwrap() {
+    match client.call(Op::ListDir { path: project.to_string_lossy().into_owned(), machine: None }).await.unwrap() {
         Reply::Dir { entries, .. } => assert_eq!(entries.iter().map(|e| e.name.as_str()).collect::<Vec<_>>(), ["src"]),
         other => panic!("{other:?}"),
     }
-    let outside = Op::ReadFile { path: dir.path().join("outside.txt").to_string_lossy().into_owned() };
+    let outside = Op::ReadFile { path: dir.path().join("outside.txt").to_string_lossy().into_owned(), machine: None };
     assert!(client.call(outside).await.unwrap_err().contains("outside"));
 
     let script = "$l=[System.Net.Sockets.TcpListener]::new([System.Net.IPAddress]::Loopback,0);$l.Start();'po'+'rt='+$l.LocalEndpoint.Port+'=o'+'k'\r";

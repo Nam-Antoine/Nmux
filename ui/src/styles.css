@@ -258,12 +258,6 @@ kbd {
 .machine-state:hover {
   background: var(--active);
 }
-.machine-row .machine-remove {
-  display: none;
-}
-.machine-row:hover .machine-remove {
-  display: grid;
-}
 .machine-row .inline-edit {
   font-size: 12px;
 }

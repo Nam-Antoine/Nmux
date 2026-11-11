@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::io::{BufRead, BufReader};
 use std::path::Path;
 use std::process::{Child, Command, Stdio};
@@ -105,6 +105,28 @@ pub fn owning_pane(pid: u32, parents: &HashMap<u32, u32>, pane_roots: &HashMap<u
         }
     }
     None
+}
+
+fn is_claude(process: &sysinfo::Process) -> bool {
+    let name = process.name().to_string_lossy().to_ascii_lowercase();
+    match name.trim_end_matches(".exe") {
+        "claude" => true,
+        "node" => process.cmd().iter().any(|arg| arg.to_string_lossy().contains("claude-code")),
+        _ => false,
+    }
+}
+
+pub fn running_claude(system: &mut sysinfo::System, pane_roots: &HashMap<u32, PaneId>) -> HashSet<PaneId> {
+    let kind = sysinfo::ProcessRefreshKind::nothing().with_cmd(sysinfo::UpdateKind::OnlyIfNotSet);
+    system.refresh_processes_specifics(sysinfo::ProcessesToUpdate::All, true, kind);
+    let parents: HashMap<u32, u32> =
+        system.processes().iter().filter_map(|(pid, p)| Some((pid.as_u32(), p.parent()?.as_u32()))).collect();
+    system
+        .processes()
+        .iter()
+        .filter(|(_, process)| is_claude(process))
+        .filter_map(|(pid, _)| owning_pane(pid.as_u32(), &parents, pane_roots))
+        .collect()
 }
 
 pub fn listening(pane_roots: &HashMap<u32, PaneId>) -> Vec<ListeningPort> {

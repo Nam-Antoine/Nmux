@@ -1,9 +1,12 @@
 use std::collections::BTreeMap;
 use std::io::Write;
+use std::path::Path;
 use std::process::{Command, Stdio};
 
 use nmux_core::{MachineStatus, PaneId};
+use nmux_proto::{DirEntry, FilePreview};
 
+use crate::files;
 use crate::launch::{find_on_path, Launch};
 
 type Env = BTreeMap<String, String>;
@@ -35,13 +38,21 @@ pub fn tmux_session(owner: &str, pane: PaneId, created_at_ms: u64) -> String {
     format!("nmux-{owner}-{}-{}", pane.0, created_at_ms / 1000 % 1_000_000)
 }
 
+fn place(path: &str) -> String {
+    if path == "~" {
+        "~".to_string()
+    } else if let Some(rest) = path.strip_prefix("~/") {
+        format!("~/{}", sh_quote(rest))
+    } else {
+        sh_quote(path)
+    }
+}
+
 pub(crate) fn cd(cwd: &str) -> String {
     if cwd == "~" {
         "cd".to_string()
-    } else if let Some(rest) = cwd.strip_prefix("~/") {
-        format!("cd ~/{}", sh_quote(rest))
     } else {
-        format!("cd {}", sh_quote(cwd))
+        format!("cd {}", place(cwd))
     }
 }
 
@@ -196,6 +207,43 @@ pub fn listening(target: &str, env: &Env) -> Result<Vec<(String, u16, String)>, 
     Ok(read_listeners(&stdout))
 }
 
+fn checked(target: &str, script: &str, env: &Env) -> Result<Vec<u8>, String> {
+    let out = output(target, script, env)?;
+    if out.status.success() {
+        Ok(out.stdout)
+    } else {
+        Err(last_line(&out.stderr, "ssh gave no reason"))
+    }
+}
+
+pub fn read_listing(text: &str) -> (String, Vec<DirEntry>) {
+    let mut lines = text.lines();
+    let path = lines.next().unwrap_or("/").to_string();
+    let entries = lines
+        .filter(|line| !line.is_empty())
+        .map(|line| DirEntry { name: line.trim_end_matches('/').to_string(), dir: line.ends_with('/'), size: 0 })
+        .collect();
+    (path, files::sorted(entries))
+}
+
+pub fn list_dir(target: &str, path: &str, env: &Env) -> Result<(String, Vec<DirEntry>), String> {
+    let out = checked(target, &format!("{} || exit 1; pwd; ls -1ApL 2>/dev/null; true", cd(path)), env)?;
+    Ok(read_listing(&String::from_utf8_lossy(&out)))
+}
+
+pub fn read_file(target: &str, path: &str, env: &Env) -> Result<FilePreview, String> {
+    let (limit, whole) = files::wanted(Path::new(path));
+    let fits = if whole { format!("[ \"$s\" -le {limit} ]") } else { "true".to_string() };
+    let script = format!(
+        "f={}; [ -f \"$f\" ] || {{ echo 'not a file' >&2; exit 1; }}; s=$(wc -c < \"$f\") || exit 1; echo $s; if {fits}; then head -c {limit} \"$f\"; fi",
+        place(path)
+    );
+    let out = checked(target, &script, env)?;
+    let split = out.iter().position(|b| *b == b'\n').ok_or("the machine sent no file size")?;
+    let size: u64 = String::from_utf8_lossy(&out[..split]).trim().parse().map_err(|_| "the machine sent no file size")?;
+    Ok(FilePreview { path: path.to_string(), size, content: files::content(Path::new(path), size, out[split + 1..].to_vec()) })
+}
+
 pub fn end_sessions(target: String, sessions: Vec<String>, env: Env) {
     if sessions.is_empty() {
         return;
@@ -253,6 +301,10 @@ mod tests {
         assert_eq!(cd("~"), "cd");
         assert_eq!(cd("~/my proj"), "cd ~/'my proj'");
         assert_eq!(cd("/srv/app"), "cd '/srv/app'");
+        let (path, entries) = read_listing("/home/can\nnotes.txt\nsrc/\n.ssh/\nApp\n");
+        assert_eq!(path, "/home/can");
+        let seen: Vec<(&str, bool)> = entries.iter().map(|e| (e.name.as_str(), e.dir)).collect();
+        assert_eq!(seen, [(".ssh", true), ("src", true), ("App", false), ("notes.txt", false)]);
     }
 
     #[test]

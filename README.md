@@ -24,8 +24,10 @@ for every agent (needs you, working, done, idle).
   local ones. A remote pane is your own `ssh` in a terminal, so your
   config, keys and prompts work as usual, and nothing is installed there. With
   tmux on the machine, panes keep running when the connection drops or Nmux
-  closes; starting the pane again reattaches. Ports and Changes work there
-  too; Files is for this computer only.
+  closes; starting the pane again reattaches. Ports, Changes and Files work
+  there too, and Files can go to any folder on the machine.
+- Run `claude` in a shell pane and it is shown and tracked as a Claude Code
+  pane until Claude exits.
 - Keyboard: `Ctrl+B` then a key (`?` lists them). Everything is on the mouse too.
 
 ## nc: talk to panes from a terminal

@@ -47,8 +47,13 @@ pub fn list_dir(path: &str, roots: &[String]) -> Result<(String, Vec<DirEntry>),
             break;
         }
     }
+    Ok((display(&dir), sorted(entries)))
+}
+
+pub fn sorted(mut entries: Vec<DirEntry>) -> Vec<DirEntry> {
+    entries.truncate(MAX_ENTRIES);
     entries.sort_by(|a, b| b.dir.cmp(&a.dir).then_with(|| a.name.to_lowercase().cmp(&b.name.to_lowercase())));
-    Ok((display(&dir), entries))
+    entries
 }
 
 fn image_mime(path: &Path) -> Option<&'static str> {
@@ -69,27 +74,29 @@ pub fn read_file(path: &str, roots: &[String]) -> Result<FilePreview, String> {
         return Err("not a file".into());
     }
     let size = meta.len();
-    let content = if let Some(mime) = image_mime(&file) {
-        if size > MAX_IMAGE {
-            FileContent::TooLarge
-        } else {
-            let bytes = std::fs::read(&file).map_err(|e| e.to_string())?;
-            FileContent::Image { mime: mime.to_string(), data: base64::engine::general_purpose::STANDARD.encode(bytes) }
-        }
+    let (limit, whole) = wanted(&file);
+    let mut bytes = Vec::new();
+    if !whole || size <= limit {
+        std::fs::File::open(&file).map_err(|e| e.to_string())?.take(limit).read_to_end(&mut bytes).map_err(|e| e.to_string())?;
+    }
+    Ok(FilePreview { path: display(&file), size, content: content(&file, size, bytes) })
+}
+
+pub fn wanted(path: &Path) -> (u64, bool) {
+    if image_mime(path).is_some() {
+        (MAX_IMAGE, true)
     } else {
-        let mut bytes = Vec::new();
-        std::fs::File::open(&file)
-            .map_err(|e| e.to_string())?
-            .take(MAX_TEXT)
-            .read_to_end(&mut bytes)
-            .map_err(|e| e.to_string())?;
-        if bytes.contains(&0) {
-            FileContent::Binary
-        } else {
-            FileContent::Text { text: String::from_utf8_lossy(&bytes).into_owned(), truncated: size > MAX_TEXT }
-        }
-    };
-    Ok(FilePreview { path: display(&file), size, content })
+        (MAX_TEXT, false)
+    }
+}
+
+pub fn content(path: &Path, size: u64, bytes: Vec<u8>) -> FileContent {
+    match image_mime(path) {
+        Some(_) if size > MAX_IMAGE => FileContent::TooLarge,
+        Some(mime) => FileContent::Image { mime: mime.to_string(), data: base64::engine::general_purpose::STANDARD.encode(bytes) },
+        None if bytes.contains(&0) => FileContent::Binary,
+        None => FileContent::Text { text: String::from_utf8_lossy(&bytes).into_owned(), truncated: size > MAX_TEXT },
+    }
 }
 
 fn sniff_image(bytes: &[u8]) -> Option<&'static str> {

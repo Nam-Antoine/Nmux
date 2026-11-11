@@ -172,7 +172,7 @@ impl Cli {
         let Some(p) = self.state.panes.get(&id) else { return serde_json::Value::Null };
         let workspace = self.state.workspaces.iter().find(|w| w.panes().contains(&id)).map(|w| w.name.as_str());
         serde_json::json!({
-            "address": self.state.address(id), "workspace": workspace, "name": p.name, "kind": p.kind,
+            "address": self.state.address(id), "workspace": workspace, "name": p.name, "kind": p.shown_kind(),
             "state": pane_state(p), "cwd": p.cwd, "me": self.me() == Some(id),
         })
     }
@@ -195,7 +195,7 @@ impl Cli {
             println!("n{:<5} {}  {}", w.number, w.name, w.cwd);
             for id in panes {
                 let Some(p) = self.state.panes.get(&id) else { continue };
-                let kind = format!("{:?}", p.kind).to_lowercase();
+                let kind = format!("{:?}", p.shown_kind()).to_lowercase();
                 let mark = if me == Some(id) { "  <- you" } else { "" };
                 println!("  {:<7} {kind:<7} {:<8} {}{mark}", self.state.address(id).unwrap_or_default(), pane_state(p), p.name);
             }
@@ -217,7 +217,7 @@ impl Cli {
         if body.trim().is_empty() {
             return fail("there is no text to send");
         }
-        let to_agent = self.pane(pane)?.kind == PaneKind::Claude;
+        let to_agent = self.pane(pane)?.shown_kind() == PaneKind::Claude;
         let from = self.me().filter(|_| to_agent && !args.has("--raw")).and_then(|me| Some((self.state.address(me)?, me)));
         let text = match from {
             Some((from, me)) => {
@@ -339,7 +339,7 @@ async fn run(mut raw: Vec<String>) -> Result<(), String> {
                 println!("{}", serde_json::to_string_pretty(&cli.describe(pane)).unwrap_or_default());
             } else {
                 let p = cli.pane(pane)?;
-                println!("{}  {:?}  {}  {}  {}", cli.state.address(pane).unwrap_or_default(), p.kind, pane_state(p), p.name, p.cwd);
+                println!("{}  {:?}  {}  {}  {}", cli.state.address(pane).unwrap_or_default(), p.shown_kind(), pane_state(p), p.name, p.cwd);
             }
         }
         "attach" => {

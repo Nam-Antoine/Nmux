@@ -3,7 +3,7 @@ import { appWindow, openCloudUrl } from '../api'
 import { activeTab, activeWorkspace, leaves, paneAddress, rollup, run, tabLabel, togglePanel, update, useStore } from '../store'
 import { terminals } from '../terminals'
 import type { LayoutNode, Pane, PaneId, Side, Tab, Workspace } from '../types'
-import { BranchIcon, Close, FilesIcon, FolderIcon, KIND_LABEL, KindIcon, Monitor, Play, Plus, ServerIcon, PortsIcon, SidebarIcon, SplitDown, SplitRight, StateDot, WinClose, WinMax, WinMin, Zoom } from './icons'
+import { BranchIcon, Close, FilesIcon, FolderIcon, KIND_LABEL, KindIcon, Monitor, Play, Plus, ServerIcon, PortsIcon, SidebarIcon, shownKind, SplitDown, SplitRight, StateDot, WinClose, WinMax, WinMin, Zoom } from './icons'
 import { ContextMenu } from './ContextMenu'
 import { InlineEdit } from './InlineEdit'
 import { SidePanel } from './SidePanel'
@@ -26,7 +26,7 @@ function WindowControls(): React.JSX.Element {
 
 function StatusBar({ ws }: { ws: Workspace }): React.JSX.Element {
   const s = useStore((x) => x)
-  const agents = s.state.panes.filter((p) => p.kind !== 'shell' && p.status === 'running')
+  const agents = s.state.panes.filter((p) => shownKind(p) !== 'shell' && p.status === 'running')
   const blocked = agents.filter((p) => p.agent === 'blocked').length
   const machine = s.state.machines.find((m) => m.id === ws.machine)
   return (
@@ -89,7 +89,7 @@ function TabBar({ ws, current }: { ws: Workspace; current: Tab }): React.JSX.Ele
             onDoubleClick={() => setRenaming(tab.id)}
             onAuxClick={(e) => e.button === 1 && closeTab(tab)}
           >
-            <KindIcon kind={focused?.kind ?? 'shell'} />
+            <KindIcon kind={focused ? shownKind(focused) : 'shell'} />
             {renaming === tab.id ? (
               <InlineEdit
                 value={tabLabel(s, tab, i)}
@@ -351,8 +351,8 @@ function PaneView({ id, focused, solo }: { id: PaneId; focused: boolean; solo: b
             </button>
           </ContextMenu>
         )}
-        <KindIcon kind={pane.kind} />
-        <span className="pane-kind">{KIND_LABEL[pane.kind]}</span>
+        <KindIcon kind={shownKind(pane)} />
+        <span className="pane-kind">{KIND_LABEL[shownKind(pane)]}</span>
         <span className="pane-cwd">{pane.cwd}</span>
         {address && (
           <span className="pane-address" title={`Other panes reach this one with: nc send ${address} "…"`}>

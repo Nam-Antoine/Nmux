@@ -3,7 +3,7 @@ import { call, openLocalPort, openPath, revealPath } from '../api'
 import { activeTab, activeWorkspace, getStore, run, toast, update, useStore, workspacePanes } from '../store'
 import { terminals } from '../terminals'
 import type { ChangedFile, DirEntry, FilePreview, Forward, GitChanges, ListeningPort, Machine } from '../types'
-import { BranchIcon, Chevron, Close, FolderIcon, Plus, Refresh } from './icons'
+import { BranchIcon, Chevron, Close, FolderIcon, Plus, Refresh, Up } from './icons'
 
 function join(dir: string, name: string): string {
   const sep = dir.includes('\\') ? '\\' : '/'
@@ -25,6 +25,7 @@ function insertPath(path: string): void {
 
 interface TreeProps {
   path: string
+  machine?: number
   depth: number
   filter: string
   version: number
@@ -32,14 +33,14 @@ interface TreeProps {
   onSelect: (path: string) => void
 }
 
-function TreeDir({ path, depth, filter, version, selected, onSelect }: TreeProps): React.JSX.Element {
+function TreeDir({ path, machine, depth, filter, version, selected, onSelect }: TreeProps): React.JSX.Element {
   const [entries, setEntries] = useState<DirEntry[] | null>(null)
   const [open, setOpen] = useState<Record<string, boolean>>({})
   const [error, setError] = useState<string | null>(null)
 
   useEffect(() => {
     let gone = false
-    call({ op: 'listDir', path })
+    call({ op: 'listDir', path, machine })
       .then((reply) => {
         if (!gone && reply.kind === 'dir') {
           setEntries(reply.entries)
@@ -50,7 +51,7 @@ function TreeDir({ path, depth, filter, version, selected, onSelect }: TreeProps
     return () => {
       gone = true
     }
-  }, [path, version])
+  }, [path, machine, version])
 
   if (error) return <div className="tree-note" style={{ paddingLeft: depth * 14 + 26 }}>{error}</div>
   if (!entries) return <div className="tree-note" style={{ paddingLeft: depth * 14 + 26 }}>Loading…</div>
@@ -85,7 +86,7 @@ function TreeDir({ path, depth, filter, version, selected, onSelect }: TreeProps
               </button>
             </div>
             {entry.dir && expanded && (
-              <TreeDir path={full} depth={depth + 1} filter={filter} version={version} selected={selected} onSelect={onSelect} />
+              <TreeDir path={full} machine={machine} depth={depth + 1} filter={filter} version={version} selected={selected} onSelect={onSelect} />
             )}
           </div>
         )
@@ -94,7 +95,7 @@ function TreeDir({ path, depth, filter, version, selected, onSelect }: TreeProps
   )
 }
 
-function Preview({ path, onClose }: { path: string; onClose: () => void }): React.JSX.Element {
+function Preview({ path, machine, onClose }: { path: string; machine?: number; onClose: () => void }): React.JSX.Element {
   const [file, setFile] = useState<FilePreview | null>(null)
   const [error, setError] = useState<string | null>(null)
 
@@ -102,13 +103,13 @@ function Preview({ path, onClose }: { path: string; onClose: () => void }): Reac
     let gone = false
     setFile(null)
     setError(null)
-    call({ op: 'readFile', path })
+    call({ op: 'readFile', path, machine })
       .then((reply) => !gone && reply.kind === 'file' && setFile(reply.file))
       .catch((err) => !gone && setError(String(err)))
     return () => {
       gone = true
     }
-  }, [path])
+  }, [path, machine])
 
   const name = path.split(/[\\/]/).pop() ?? path
   const content = file?.content
@@ -121,12 +122,16 @@ function Preview({ path, onClose }: { path: string; onClose: () => void }): Reac
         <button className="btn small-btn" title="Type this path into the focused pane" onClick={() => insertPath(path)}>
           Insert path
         </button>
-        <button className="btn small-btn" title="Open with the default program" onClick={() => openPath(path).catch((e) => toast(String(e)))}>
-          Open
-        </button>
-        <button className="btn small-btn" title="Show in the file manager" onClick={() => revealPath(path).catch((e) => toast(String(e)))}>
-          Reveal
-        </button>
+        {machine === undefined && (
+          <>
+            <button className="btn small-btn" title="Open with the default program" onClick={() => openPath(path).catch((e) => toast(String(e)))}>
+              Open
+            </button>
+            <button className="btn small-btn" title="Show in the file manager" onClick={() => revealPath(path).catch((e) => toast(String(e)))}>
+              Reveal
+            </button>
+          </>
+        )}
         <button className="icon-btn" title="Close preview" onClick={onClose}>
           <Close />
         </button>
@@ -141,36 +146,75 @@ function Preview({ path, onClose }: { path: string; onClose: () => void }): Reac
           </pre>
         )}
         {content?.type === 'image' && <img src={`data:${content.mime};base64,${content.data}`} alt={name} />}
-        {content?.type === 'binary' && <div className="tree-note">This is not a text file. Use Open.</div>}
-        {content?.type === 'tooLarge' && <div className="tree-note">Too large to preview. Use Open.</div>}
+        {content?.type === 'binary' && <div className="tree-note">This is not a text file.{machine === undefined && ' Use Open.'}</div>}
+        {content?.type === 'tooLarge' && <div className="tree-note">Too large to preview.{machine === undefined && ' Use Open.'}</div>}
       </div>
     </div>
   )
 }
 
 function Files(): React.JSX.Element {
-  const remote = useStore((s) => activeWorkspace(s)?.machine !== undefined)
+  const machine = useStore((s) => activeWorkspace(s)?.machine)
   const root = useStore((s) => activeWorkspace(s)?.cwd)
+  const [place, setPlace] = useState(root)
+  const [typed, setTyped] = useState(root ?? '')
   const [filter, setFilter] = useState('')
   const [version, setVersion] = useState(0)
   const [selected, setSelected] = useState<string | null>(null)
 
-  useEffect(() => setSelected(null), [root])
+  const go = (path: string): void => {
+    setPlace(path)
+    setTyped(path)
+    setSelected(null)
+  }
 
-  if (!root) return <div className="tree-note">Open a workspace to see its files.</div>
-  if (remote) return <div className="tree-note">This workspace is on another machine. Files are shown for workspaces on this computer.</div>
+  useEffect(() => {
+    if (!root) return
+    let gone = false
+    go(root)
+    if (machine !== undefined && !root.startsWith('/')) {
+      call({ op: 'listDir', path: root, machine })
+        .then((reply) => !gone && reply.kind === 'dir' && go(reply.path))
+        .catch(() => undefined)
+    }
+    return () => {
+      gone = true
+    }
+  }, [root, machine])
+
+  if (!root || !place) return <div className="tree-note">Open a workspace to see its files.</div>
   return (
     <>
+      {machine !== undefined && (
+        <form
+          className="panel-tools"
+          onSubmit={(e) => {
+            e.preventDefault()
+            if (typed.trim()) go(typed.trim())
+          }}
+        >
+          <button
+            type="button"
+            className="icon-btn"
+            title="Up one folder"
+            disabled={!place.startsWith('/') || place === '/'}
+            onClick={() => go(place.replace(/\/[^/]+\/*$/, '') || '/')}
+          >
+            <Up />
+          </button>
+          <input value={typed} onChange={(e) => setTyped(e.target.value)} title="Any folder on this machine. Press Enter to go there." spellCheck={false} />
+        </form>
+      )}
       <div className="panel-tools">
         <input value={filter} onChange={(e) => setFilter(e.target.value)} placeholder="Filter files" spellCheck={false} />
         <button className="icon-btn" title="Refresh" onClick={() => setVersion(version + 1)}>
           <Refresh />
         </button>
       </div>
-      <div className="tree" key={root}>
-        <TreeDir path={root} depth={0} filter={filter.trim().toLowerCase()} version={version} selected={selected} onSelect={setSelected} />
+      <div className="tree" key={place}>
+        <TreeDir path={place} machine={machine} depth={0} filter={filter.trim().toLowerCase()} version={version} selected={selected} onSelect={setSelected} />
       </div>
-      {selected && <Preview path={selected} onClose={() => setSelected(null)} />}
+      {selected && <Preview path={selected} machine={machine} onClose={() => setSelected(null)} />}
     </>
   )
 }

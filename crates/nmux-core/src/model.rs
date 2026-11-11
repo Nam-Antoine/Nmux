@@ -116,7 +116,19 @@ pub struct Pane {
     pub teleported_from: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub machine: Option<MachineId>,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub runs_claude: bool,
     pub created_at: u64,
+}
+
+impl Pane {
+    pub fn shown_kind(&self) -> PaneKind {
+        if self.runs_claude {
+            PaneKind::Claude
+        } else {
+            self.kind
+        }
+    }
 }
 
 #[derive(Clone, PartialEq, Debug, Serialize, Deserialize)]
@@ -304,6 +316,7 @@ impl State {
             cloud_url: None,
             teleported_from: spec.teleport,
             machine,
+            runs_claude: false,
             created_at: now,
         }
     }
@@ -546,7 +559,7 @@ impl State {
     pub fn set_detected(&mut self, pane: PaneId, detected: Detected, window_visible: bool) -> bool {
         let seen = window_visible && self.is_in_view(pane);
         let Some(p) = self.panes.get_mut(&pane) else { return false };
-        if p.kind == PaneKind::Shell || p.status == PaneStatus::Exited {
+        if p.shown_kind() == PaneKind::Shell || p.status == PaneStatus::Exited {
             return false;
         }
         let next = match detected {
@@ -578,6 +591,7 @@ impl State {
         p.status = PaneStatus::Exited;
         p.exit_code = code;
         p.agent = AgentState::Unknown;
+        p.runs_claude = false;
         true
     }
 
@@ -586,7 +600,19 @@ impl State {
         p.status = PaneStatus::Running;
         p.exit_code = None;
         p.agent = AgentState::Unknown;
+        p.runs_claude = false;
         true
+    }
+
+    pub fn set_runs_claude(&mut self, pane: PaneId, on: bool) -> bool {
+        match self.panes.get_mut(&pane) {
+            Some(p) if p.runs_claude != on && p.status == PaneStatus::Running => {
+                p.runs_claude = on;
+                p.agent = AgentState::Unknown;
+                true
+            }
+            _ => false,
+        }
     }
 
     pub fn tab_state(&self, tab: &Tab) -> AgentState {
@@ -731,6 +757,7 @@ impl State {
             p.status = PaneStatus::Exited;
             p.exit_code = None;
             p.agent = AgentState::Unknown;
+            p.runs_claude = false;
         }
         if !self.active_workspace.is_some_and(|id| self.workspaces.iter().any(|w| w.id == id)) {
             self.active_workspace = self.workspaces.first().map(|w| w.id);
@@ -915,6 +942,12 @@ mod tests {
         let c = s.create_workspace(None, "/w".into(), PaneSpec::new(PaneKind::Shell), 1);
         assert!(!s.set_detected(c.pane, Detected::Working, true));
         assert_eq!(s.panes[&c.pane].agent, AgentState::Unknown);
+
+        assert!(s.set_runs_claude(c.pane, true) && !s.set_runs_claude(c.pane, true));
+        assert_eq!(s.panes[&c.pane].shown_kind(), PaneKind::Claude);
+        assert!(s.set_detected(c.pane, Detected::Working, true));
+        assert!(s.set_runs_claude(c.pane, false));
+        assert_eq!((s.panes[&c.pane].shown_kind(), s.panes[&c.pane].agent), (PaneKind::Shell, AgentState::Unknown));
     }
 
     #[test]
