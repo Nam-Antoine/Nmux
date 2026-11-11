@@ -1,4 +1,4 @@
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::io::{BufRead, BufReader};
 use std::path::Path;
 use std::process::{Child, Command, Stdio};
@@ -116,17 +116,28 @@ fn is_claude(process: &sysinfo::Process) -> bool {
     }
 }
 
-pub fn running_claude(system: &mut sysinfo::System, pane_roots: &HashMap<u32, PaneId>) -> HashSet<PaneId> {
+pub struct ClaudeProcess {
+    pub pid: u32,
+    pub skip_permissions: bool,
+    started: u64,
+}
+
+pub fn running_claude(system: &mut sysinfo::System, pane_roots: &HashMap<u32, PaneId>) -> HashMap<PaneId, ClaudeProcess> {
     let kind = sysinfo::ProcessRefreshKind::nothing().with_cmd(sysinfo::UpdateKind::OnlyIfNotSet);
     system.refresh_processes_specifics(sysinfo::ProcessesToUpdate::All, true, kind);
     let parents: HashMap<u32, u32> =
         system.processes().iter().filter_map(|(pid, p)| Some((pid.as_u32(), p.parent()?.as_u32()))).collect();
-    system
-        .processes()
-        .iter()
-        .filter(|(_, process)| is_claude(process))
-        .filter_map(|(pid, _)| owning_pane(pid.as_u32(), &parents, pane_roots))
-        .collect()
+    let mut found: HashMap<PaneId, ClaudeProcess> = HashMap::new();
+    for (pid, process) in system.processes().iter().filter(|(_, process)| is_claude(process)) {
+        let Some(pane) = owning_pane(pid.as_u32(), &parents, pane_roots) else { continue };
+        let started = process.start_time();
+        if found.get(&pane).is_some_and(|first| first.started <= started) {
+            continue;
+        }
+        let skip_permissions = process.cmd().iter().any(|arg| arg == "--dangerously-skip-permissions");
+        found.insert(pane, ClaudeProcess { pid: pid.as_u32(), skip_permissions, started });
+    }
+    found
 }
 
 pub fn listening(pane_roots: &HashMap<u32, PaneId>) -> Vec<ListeningPort> {

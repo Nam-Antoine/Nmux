@@ -1,6 +1,6 @@
 use std::path::{Path, PathBuf};
 
-use nmux_core::State;
+use nmux_core::{PaneId, State};
 use serde::Deserialize;
 
 const FILE: &str = "state.json";
@@ -24,7 +24,7 @@ pub fn save(data_dir: &Path, state: &State) -> std::io::Result<()> {
     std::fs::rename(&tmp, &file)
 }
 
-pub fn load(data_dir: &Path) -> Option<State> {
+pub fn load(data_dir: &Path) -> Option<(State, Vec<PaneId>)> {
     let body = std::fs::read(state_path(data_dir)).ok()?;
     let file: StoreFile = match serde_json::from_slice(&body) {
         Ok(f) => f,
@@ -38,8 +38,8 @@ pub fn load(data_dir: &Path) -> Option<State> {
         return None;
     }
     let mut state = file.state;
-    state.sanitize_after_load();
-    Some(state)
+    let were_running = state.sanitize_after_load();
+    Some((state, were_running))
 }
 
 #[cfg(test)]
@@ -54,7 +54,8 @@ mod tests {
         let mut state = State::default();
         let c = state.create_workspace(None, "C:\\w".into(), PaneSpec::new(PaneKind::Claude), 5);
         save(dir.path(), &state).unwrap();
-        let loaded = load(dir.path()).unwrap();
+        let (loaded, were_running) = load(dir.path()).unwrap();
+        assert_eq!(were_running, vec![c.pane], "what was running starts again");
         assert_eq!(loaded.workspaces, state.workspaces);
         assert_eq!(loaded.panes[&c.pane].status, PaneStatus::Exited, "nothing is running after a restart");
     }

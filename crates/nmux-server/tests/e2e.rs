@@ -116,11 +116,10 @@ async fn a_shell_pane_runs_survives_reattach_and_is_restored() {
     let restored = state(&client).await;
     assert_eq!(restored.workspaces.len(), 1);
     assert_eq!(restored.workspaces[0].name, "demo");
-    assert_eq!(restored.panes[&pane].status, PaneStatus::Exited);
+    assert_eq!(restored.panes[&pane].status, PaneStatus::Running, "what was running starts again");
 
     client.call(Op::Resize { pane, cols: 57, rows: 30 }).await.unwrap();
     assert!(client.call(Op::Resize { pane: PaneId(9999), cols: 57, rows: 30 }).await.is_err());
-    client.call(Op::RestartPane { pane }).await.unwrap();
     match client.call(Op::Attach { pane }).await.unwrap() {
         Reply::Attached { snapshot } => assert_eq!((snapshot.cols, snapshot.rows), (57, 30)),
         other => panic!("{other:?}"),

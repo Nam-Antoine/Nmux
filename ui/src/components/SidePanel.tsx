@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react'
 import { call, openLocalPort, openPath, revealPath } from '../api'
-import { activeTab, activeWorkspace, getStore, run, toast, update, useStore, workspacePanes } from '../store'
+import { activeTab, activeWorkspace, getStore, run, toast, useStore, workspacePanes } from '../store'
 import { terminals } from '../terminals'
 import type { ChangedFile, DirEntry, FilePreview, Forward, GitChanges, ListeningPort, Machine } from '../types'
 import { BranchIcon, Chevron, Close, FolderIcon, Plus, Refresh, Up } from './icons'
@@ -571,23 +571,6 @@ export function SidePanel(): React.JSX.Element | null {
   if (!panel) return null
   return (
     <aside className="side-panel">
-      <div className="panel-head">
-        <div className="segmented small-seg">
-          <button className={panel === 'files' ? 'on' : ''} onClick={() => update({ panel: 'files' })}>
-            Files
-          </button>
-          <button className={panel === 'ports' ? 'on' : ''} onClick={() => update({ panel: 'ports' })}>
-            Ports
-          </button>
-          <button className={panel === 'changes' ? 'on' : ''} onClick={() => update({ panel: 'changes' })}>
-            Changes
-          </button>
-        </div>
-        <span className="grow" />
-        <button className="icon-btn" title="Close panel" onClick={() => update({ panel: null })}>
-          <Close />
-        </button>
-      </div>
       <div className="panel-view" key={panel}>
         {panel === 'files' ? <Files /> : panel === 'changes' ? <Changes /> : machine ? <MachinePorts key={machine.id} machine={machine} /> : <Ports />}
       </div>

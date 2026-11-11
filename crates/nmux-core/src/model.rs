@@ -118,10 +118,30 @@ pub struct Pane {
     pub machine: Option<MachineId>,
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub runs_claude: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub claude_cwd: Option<String>,
     pub created_at: u64,
 }
 
+#[derive(Clone, PartialEq, Eq, Debug, Default)]
+pub struct ShellClaude {
+    pub session_id: Option<String>,
+    pub cwd: Option<String>,
+    pub skip_permissions: bool,
+}
+
 impl Pane {
+    fn keep_claude(&mut self) {
+        let cwd = self.claude_cwd.take();
+        if std::mem::take(&mut self.runs_claude) && self.claude_session_id.is_some() {
+            self.kind = PaneKind::Claude;
+            self.cwd = cwd.unwrap_or_else(|| std::mem::take(&mut self.cwd));
+            if self.name == "shell" {
+                self.name = "claude".to_string();
+            }
+        }
+    }
+
     pub fn shown_kind(&self) -> PaneKind {
         if self.runs_claude {
             PaneKind::Claude
@@ -317,6 +337,7 @@ impl State {
             teleported_from: spec.teleport,
             machine,
             runs_claude: false,
+            claude_cwd: None,
             created_at: now,
         }
     }
@@ -591,7 +612,7 @@ impl State {
         p.status = PaneStatus::Exited;
         p.exit_code = code;
         p.agent = AgentState::Unknown;
-        p.runs_claude = false;
+        p.keep_claude();
         true
     }
 
@@ -604,15 +625,21 @@ impl State {
         true
     }
 
-    pub fn set_runs_claude(&mut self, pane: PaneId, on: bool) -> bool {
-        match self.panes.get_mut(&pane) {
-            Some(p) if p.runs_claude != on && p.status == PaneStatus::Running => {
-                p.runs_claude = on;
-                p.agent = AgentState::Unknown;
-                true
-            }
-            _ => false,
+    pub fn set_runs_claude(&mut self, pane: PaneId, found: Option<ShellClaude>) -> bool {
+        let Some(p) = self.panes.get_mut(&pane).filter(|p| p.kind == PaneKind::Shell && p.status == PaneStatus::Running) else {
+            return false;
+        };
+        let before = p.clone();
+        if p.runs_claude != found.is_some() {
+            p.agent = AgentState::Unknown;
         }
+        p.runs_claude = found.is_some();
+        let kept = p.claude_session_id.take().filter(|_| p.runs_claude);
+        let found = found.unwrap_or_default();
+        p.claude_session_id = found.session_id.or(kept);
+        p.claude_cwd = found.cwd;
+        p.skip_permissions = found.skip_permissions;
+        *p != before
     }
 
     pub fn tab_state(&self, tab: &Tab) -> AgentState {
@@ -722,7 +749,7 @@ impl State {
         }
     }
 
-    pub fn sanitize_after_load(&mut self) {
+    pub fn sanitize_after_load(&mut self) -> Vec<PaneId> {
         for i in 0..self.workspaces.len() {
             let number = self.workspaces[i].number;
             if number == 0 || self.workspaces[..i].iter().any(|w| w.number == number) {
@@ -753,11 +780,15 @@ impl State {
         let placed: std::collections::HashSet<PaneId> =
             self.workspaces.iter().flat_map(|w| w.tabs.iter()).flat_map(|t| t.layout.panes()).collect();
         self.panes.retain(|id, _| placed.contains(id));
+        let mut were_running = Vec::new();
         for p in self.panes.values_mut() {
+            if p.status == PaneStatus::Running && p.kind != PaneKind::Cloud {
+                were_running.push(p.id);
+            }
             p.status = PaneStatus::Exited;
             p.exit_code = None;
             p.agent = AgentState::Unknown;
-            p.runs_claude = false;
+            p.keep_claude();
         }
         if !self.active_workspace.is_some_and(|id| self.workspaces.iter().any(|w| w.id == id)) {
             self.active_workspace = self.workspaces.first().map(|w| w.id);
@@ -770,6 +801,7 @@ impl State {
             .max()
             .unwrap_or(0);
         self.next_id = self.next_id.max(max);
+        were_running
     }
 }
 
@@ -943,11 +975,19 @@ mod tests {
         assert!(!s.set_detected(c.pane, Detected::Working, true));
         assert_eq!(s.panes[&c.pane].agent, AgentState::Unknown);
 
-        assert!(s.set_runs_claude(c.pane, true) && !s.set_runs_claude(c.pane, true));
+        let found = || Some(ShellClaude { session_id: Some("abc".into()), cwd: Some("/w/sub".into()), skip_permissions: true });
+        assert!(s.set_runs_claude(c.pane, found()) && !s.set_runs_claude(c.pane, found()));
         assert_eq!(s.panes[&c.pane].shown_kind(), PaneKind::Claude);
         assert!(s.set_detected(c.pane, Detected::Working, true));
-        assert!(s.set_runs_claude(c.pane, false));
-        assert_eq!((s.panes[&c.pane].shown_kind(), s.panes[&c.pane].agent), (PaneKind::Shell, AgentState::Unknown));
+        assert!(s.set_runs_claude(c.pane, None));
+        let p = &s.panes[&c.pane];
+        assert_eq!((p.shown_kind(), p.agent, &p.claude_session_id, p.skip_permissions), (PaneKind::Shell, AgentState::Unknown, &None, false));
+
+        s.set_runs_claude(c.pane, found());
+        s.set_runs_claude(c.pane, Some(ShellClaude::default()));
+        s.set_exited(c.pane, None);
+        let p = &s.panes[&c.pane];
+        assert_eq!((p.kind, p.cwd.as_str(), p.name.as_str(), p.claude_session_id.as_deref()), (PaneKind::Claude, "/w", "claude", Some("abc")));
     }
 
     #[test]

@@ -5,7 +5,7 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use nmux_core::detect;
 use nmux_core::validate;
-use nmux_core::{AgentState, Created, Dir, MachineId, MachineStatus, PaneId, PaneKind, PaneSpec, PaneStatus, State, WorkspaceId};
+use nmux_core::{AgentState, Created, Dir, MachineId, MachineStatus, PaneId, PaneKind, PaneSpec, PaneStatus, ShellClaude, State, WorkspaceId};
 use nmux_proto::{Event, Op, Reply, Snapshot};
 use tokio::sync::{broadcast, watch};
 
@@ -91,7 +91,7 @@ fn now_ms() -> u64 {
 
 impl Hub {
     pub fn new(config: Config) -> Arc<Hub> {
-        let state = persist::load(&config.data_dir).unwrap_or_default();
+        let (state, were_running) = persist::load(&config.data_dir).unwrap_or_default();
         let (events, _) = broadcast::channel(4096);
         let forward_events = events.clone();
         let forwards = Forwards::load(
@@ -100,7 +100,7 @@ impl Hub {
                 let _ = forward_events.send(Arc::new(Event::Forwards { forwards }));
             }),
         );
-        Arc::new(Hub {
+        let hub = Arc::new(Hub {
             forwards,
             inner: Mutex::new(Inner {
                 state,
@@ -115,7 +115,11 @@ impl Hub {
             config,
             processes: Mutex::new(sysinfo::System::new()),
             shutdown: watch::Sender::new(false),
-        })
+        });
+        for pane in were_running {
+            let _ = hub.handle(Op::RestartPane { pane });
+        }
+        hub
     }
 
     fn lock(&self) -> MutexGuard<'_, Inner> {
@@ -489,11 +493,11 @@ impl Hub {
                 for rt in inner.runtimes.values_mut() {
                     graveyard.extend(rt.process.take());
                 }
+                let _ = persist::save(&self.config.data_dir, &inner.state);
                 let panes: Vec<PaneId> = inner.state.panes.keys().copied().collect();
                 for pane in panes {
                     inner.state.set_exited(pane, None);
                 }
-                let _ = persist::save(&self.config.data_dir, &inner.state);
                 inner.save_dirty = false;
                 self.shutdown.send_replace(true);
                 Ok(Reply::Done)
@@ -745,6 +749,17 @@ impl Hub {
         drop(process);
     }
 
+    fn shell_claude(&self, process: &ports::ClaudeProcess) -> ShellClaude {
+        let file = self.config.claude_dir.as_ref().map(|dir| dir.join("sessions").join(format!("{}.json", process.pid)));
+        let session: Option<serde_json::Value> = file.and_then(|f| std::fs::read(f).ok()).and_then(|body| serde_json::from_slice(&body).ok());
+        let text = |key: &str| session.as_ref().and_then(|s| s.get(key)?.as_str().map(str::to_string));
+        ShellClaude {
+            session_id: text("sessionId").filter(|id| !id.is_empty() && id.len() <= 64 && id.chars().all(|c| c.is_ascii_alphanumeric() || c == '-')),
+            cwd: text("cwd").and_then(|cwd| validate::cwd(&cwd).ok()),
+            skip_permissions: process.skip_permissions,
+        }
+    }
+
     fn watch_shells(&self) {
         let roots: HashMap<u32, PaneId> = {
             let mut inner = self.lock();
@@ -763,11 +778,12 @@ impl Hub {
             return;
         }
         let found = ports::running_claude(&mut self.processes.lock().unwrap_or_else(|poisoned| poisoned.into_inner()), &roots);
+        let found: HashMap<PaneId, ShellClaude> = found.into_iter().map(|(pane, process)| (pane, self.shell_claude(&process))).collect();
         let mut inner = self.lock();
         let inner = &mut *inner;
         let mut changed = false;
         for id in roots.values() {
-            if inner.state.set_runs_claude(*id, found.contains(id)) {
+            if inner.state.set_runs_claude(*id, found.get(id).cloned()) {
                 changed = true;
                 if let Some(rt) = inner.runtimes.get_mut(id) {
                     rt.detect_dirty = true;

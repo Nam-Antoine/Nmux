@@ -27,7 +27,10 @@ for every agent (needs you, working, done, idle).
   closes; starting the pane again reattaches. Ports, Changes and Files work
   there too, and Files can go to any folder on the machine.
 - Run `claude` in a shell pane and it is shown and tracked as a Claude Code
-  pane until Claude exits.
+  pane until Claude exits. If Nmux closes first, the pane resumes that
+  conversation.
+- What was running when Nmux shut down starts again when it opens: Claude
+  panes resume their conversations, shells open in their folders.
 - Keyboard: `Ctrl+B` then a key (`?` lists them). Everything is on the mouse too.
 
 ## nc: talk to panes from a terminal

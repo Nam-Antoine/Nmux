@@ -6,5 +6,5 @@ pub mod validate;
 pub use layout::{Dir, Node, PaneId, Rect, Side};
 pub use model::{
     AgentState, Closed, Created, Detected, Machine, MachineId, MachineStatus, ModelError, Pane, PaneKind, PaneSpec,
-    PaneStatus, State, Tab, TabId, Workspace, WorkspaceId,
+    PaneStatus, ShellClaude, State, Tab, TabId, Workspace, WorkspaceId,
 };

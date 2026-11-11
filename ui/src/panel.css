@@ -10,21 +10,6 @@
   background: var(--side);
   border-left: 1px solid var(--border);
 }
-.panel-head {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 8px 8px 8px 10px;
-  min-height: 44px;
-}
-.small-seg {
-  padding: 3px;
-}
-.small-seg button {
-  height: 26px;
-  padding: 0 14px;
-  font-size: 13px;
-}
 .panel-tools {
   display: flex;
   gap: 6px;
@@ -214,6 +199,7 @@
 .panel-view {
   flex: 1;
   min-height: 0;
+  padding-top: 10px;
   display: flex;
   flex-direction: column;
   animation: fade-in var(--t-med) var(--ease-out);
