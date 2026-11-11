@@ -142,6 +142,7 @@ fn may_wait(op: &Op) -> bool {
             | Op::GitChanges { .. }
             | Op::GitDiff { .. }
             | Op::ListPorts
+            | Op::ListSshHosts
             | Op::ListDir { .. }
             | Op::ReadFile { .. }
             | Op::CheckPath { .. }

@@ -85,6 +85,7 @@ export type Op =
   | { op: 'renameMachine'; machine: MachineId; label: string }
   | { op: 'removeMachine'; machine: MachineId }
   | { op: 'checkMachine'; machine: MachineId }
+  | { op: 'listSshHosts' }
   | { op: 'createTab'; workspace: WorkspaceId; name?: string; pane: PaneSpec }
   | { op: 'splitPane'; target: PaneId; dir: Dir; pane: PaneSpec }
   | { op: 'closePane'; pane: PaneId }
@@ -95,6 +96,7 @@ export type Op =
   | { op: 'selectWorkspace'; workspace: WorkspaceId }
   | { op: 'focusSide'; pane: PaneId; side: Side }
   | { op: 'swapPanes'; a: PaneId; b: PaneId }
+  | { op: 'movePane'; pane: PaneId; target: PaneId; side: Side }
   | { op: 'setRatio'; tab: TabId; path: number[]; ratio: number }
   | { op: 'resizeSplit'; pane: PaneId; side: Side; delta: number }
   | { op: 'toggleZoom'; pane: PaneId }
@@ -192,6 +194,13 @@ export type Reply =
   | { kind: 'changes'; changes: GitChanges }
   | { kind: 'diff'; diff: string; truncated: boolean }
   | { kind: 'forwards'; forwards: Forward[] }
+  | { kind: 'sshHosts'; hosts: SshHost[] }
+
+export interface SshHost {
+  alias: string
+  hostname?: string
+  user?: string
+}
 
 export type ServerEvent =
   | { event: 'state'; state: State }

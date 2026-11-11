@@ -10,6 +10,7 @@ pub mod pty;
 pub mod remote;
 pub mod screen;
 pub mod serve;
+pub mod sshconfig;
 pub mod transcripts;
 
 use std::path::PathBuf;

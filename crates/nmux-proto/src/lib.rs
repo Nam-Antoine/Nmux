@@ -35,6 +35,7 @@ pub enum Op {
     RenameMachine { machine: MachineId, label: String },
     RemoveMachine { machine: MachineId },
     CheckMachine { machine: MachineId },
+    ListSshHosts,
     #[serde(rename_all = "camelCase")]
     CreateTab { workspace: WorkspaceId, name: Option<String>, pane: PaneSpec },
     #[serde(rename_all = "camelCase")]
@@ -50,6 +51,7 @@ pub enum Op {
     SelectWorkspace { workspace: WorkspaceId },
     FocusSide { pane: PaneId, side: Side },
     SwapPanes { a: PaneId, b: PaneId },
+    MovePane { pane: PaneId, target: PaneId, side: Side },
     SetRatio { tab: TabId, path: Vec<u8>, ratio: f32 },
     ResizeSplit { pane: PaneId, side: Side, delta: f32 },
     ToggleZoom { pane: PaneId },
@@ -122,6 +124,17 @@ pub enum Reply {
     Changes { changes: GitChanges },
     Diff { diff: String, truncated: bool },
     Forwards { forwards: Vec<Forward> },
+    SshHosts { hosts: Vec<SshHost> },
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SshHost {
+    pub alias: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub hostname: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub user: Option<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]

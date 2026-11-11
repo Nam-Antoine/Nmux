@@ -911,6 +911,48 @@ textarea {
   padding: 0 5px 0 10.5px;
   border-bottom: 1px solid var(--pane-line);
   flex: none;
+  position: relative;
+}
+.pane-grip {
+  position: absolute;
+  top: 0;
+  left: 50%;
+  width: 56px;
+  height: 11px;
+  margin-left: -28px;
+  cursor: grab;
+  opacity: 0;
+  transition: opacity var(--t-fast) ease-out;
+}
+.pane-grip::after {
+  content: '';
+  position: absolute;
+  inset: 3px 8px 4px;
+  border-radius: 2px;
+  background: var(--fg-3);
+}
+.pane-head:hover .pane-grip,
+.pane-grip.moving {
+  opacity: 1;
+}
+.pane-grip.moving {
+  cursor: grabbing;
+}
+.pane-grip.moving::after {
+  background: var(--focus);
+}
+.pane-drop {
+  position: fixed;
+  z-index: 30;
+  pointer-events: none;
+  border: 1px solid var(--focus);
+  border-radius: 9px;
+  background: rgba(150, 178, 215, 0.16);
+  transition:
+    left var(--t-fast) ease-out,
+    top var(--t-fast) ease-out,
+    width var(--t-fast) ease-out,
+    height var(--t-fast) ease-out;
 }
 .pane-kind {
   font-weight: 500;
@@ -1108,6 +1150,94 @@ textarea {
 }
 .dialog .row input {
   flex: 1;
+}
+.dialog .grow {
+  flex: 1;
+}
+.esc {
+  padding: 2px 7px;
+  border-radius: 5px;
+  font-size: 11px;
+  color: var(--muted);
+}
+.esc:hover {
+  background: var(--active);
+  color: var(--fg);
+}
+.host-list {
+  max-height: 280px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+}
+.host-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 40px;
+  padding: 0 10px;
+  border-radius: 8px;
+  color: var(--fg);
+}
+.host-row.idle {
+  cursor: pointer;
+}
+.host-row:hover {
+  background: var(--hover);
+}
+.host-row > svg {
+  flex: none;
+  color: var(--fg-3);
+}
+.host-name {
+  flex: none;
+}
+.host-sub {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12px;
+  color: var(--muted);
+}
+.host-row .btn {
+  height: 26px;
+  font-size: 12px;
+}
+.host-state {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--fg-3);
+}
+.host-state.ok {
+  color: var(--ok);
+}
+.host-note {
+  padding: 0 10px 6px 36px;
+  font-size: 12px;
+  color: var(--fg-3);
+}
+.host-note.bad {
+  color: var(--danger);
+}
+form .host-note {
+  padding-left: 0;
+}
+.spinner {
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  border: 1.5px solid var(--tab-border);
+  border-top-color: var(--warn);
+  animation: spin 900ms linear infinite;
+}
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
 }
 .segmented {
   display: flex;

@@ -3,12 +3,12 @@ import { activeTab, activeWorkspace, getStore, run, togglePanel, update } from '
 import type { PaneSpec, Side } from './types'
 
 export const BINDINGS: Array<[string, string]> = [
-  ['c', 'New Claude tab'],
+  ['c', 'New Claude Code tab'],
   ['s', 'New shell tab'],
   ['v', 'Split right (shell)'],
   ['-', 'Split down (shell)'],
-  ['V', 'Split right (Claude)'],
-  ['_', 'Split down (Claude)'],
+  ['V', 'Split right (Claude Code)'],
+  ['_', 'Split down (Claude Code)'],
   ['h j k l / arrows', 'Move between panes'],
   ['H J K L', 'Resize the focused pane'],
   ['z', 'Zoom the focused pane'],
@@ -54,8 +54,14 @@ export function handleKey(ev: KeyboardEvent): boolean {
   const key = ev.key
 
   if (!s.prefix) {
-    if (ev.ctrlKey && !ev.shiftKey && !ev.altKey && key.toLowerCase() === 'b') {
+    const direct = key.toLowerCase()
+    if (ev.ctrlKey && !ev.shiftKey && !ev.altKey && direct === 'b') {
       arm(true)
+      return true
+    }
+    const focused = activeTab(s)?.focused
+    if (ev.ctrlKey && ev.shiftKey && !ev.altKey && (direct === 'o' || direct === 'e') && focused !== undefined) {
+      void run({ op: 'splitPane', target: focused, dir: direct === 'o' ? 'right' : 'down', pane: shell })
       return true
     }
     return false

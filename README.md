@@ -19,8 +19,9 @@ for every agent (needs you, working, done, idle).
   forwards (`ssh -L`) to other machines.
 - Changes panel: git branch, changed files with line counts, and diffs.
 - Paste a copied image, or drop files, into a pane: the agent gets the path.
-- Machines: save an SSH target ("Add machine") and open workspaces on it next
-  to the local ones. A remote pane is your own `ssh` in a terminal, so your
+- Machines: "Add machine" lists the hosts in your `~/.ssh/config` (or type a
+  target), checks that it connects, and you open workspaces on it next to the
+  local ones. A remote pane is your own `ssh` in a terminal, so your
   config, keys and prompts work as usual, and nothing is installed there. With
   tmux on the machine, panes keep running when the connection drops or Nmux
   closes; starting the pane again reattaches. Ports and Changes work there

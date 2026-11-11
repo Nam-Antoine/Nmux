@@ -5,6 +5,9 @@ const base = { width: 16, height: 16, viewBox: '0 0 16 16', fill: 'none', stroke
 export const Plus = () => (
   <svg {...base}><path d="M8 3.5v9M3.5 8h9" /></svg>
 )
+export const Check = () => (
+  <svg {...base}><path d="M3.5 8.5l3 3 6-7" /></svg>
+)
 export const Close = () => (
   <svg {...base}><path d="M4.5 4.5l7 7M11.5 4.5l-7 7" /></svg>
 )

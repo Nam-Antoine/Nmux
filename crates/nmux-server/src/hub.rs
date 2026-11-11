@@ -17,6 +17,7 @@ use crate::launch::{self, ClaudeOptions};
 use crate::persist;
 use crate::pty::PtyProcess;
 use crate::remote;
+use crate::sshconfig;
 use crate::screen::{Screen, DEFAULT_COLS, DEFAULT_ROWS};
 use crate::transcripts::{self, Transcript};
 
@@ -227,6 +228,7 @@ impl Hub {
                 Reply::Diff { diff, truncated }
             }
             Op::ListForwards => Reply::Forwards { forwards: self.forwards.list() },
+            Op::ListSshHosts => Reply::SshHosts { hosts: sshconfig::hosts(&self.config.env) },
             Op::StartForward { host, remote_port, local_port } => forwards(self.forwards.start(host.trim(), remote_port, local_port)?),
             Op::StopForward { id } => forwards(self.forwards.stop(id)?),
             Op::RemoveForward { id } => forwards(self.forwards.remove(id)?),
@@ -265,6 +267,7 @@ impl Hub {
             | Op::GitChanges { .. }
             | Op::GitDiff { .. }
             | Op::ListForwards
+            | Op::ListSshHosts
             | Op::StartForward { .. }
             | Op::StopForward { .. }
             | Op::RemoveForward { .. }
@@ -352,6 +355,7 @@ impl Hub {
                 Ok(Reply::Pane { pane: next })
             }
             Op::SwapPanes { a, b } => self.done(inner, |s| s.swap_panes(a, b)),
+            Op::MovePane { pane, target, side } => self.done(inner, |s| s.move_pane(pane, target, side)),
             Op::SetRatio { tab, path, ratio } => self.done(inner, |s| s.set_ratio(tab, &path, ratio)),
             Op::ResizeSplit { pane, side, delta } => {
                 if !delta.is_finite() {

@@ -1,9 +1,9 @@
 import { useEffect, useState } from 'react'
-import { pickFolder } from '../api'
+import { call, pickFolder } from '../api'
 import { BINDINGS } from '../keys'
-import { getStore, run, update, useStore } from '../store'
-import type { Machine, PaneKind, PaneSpec } from '../types'
-import { FolderIcon, KIND_LABEL, KindIcon } from './icons'
+import { run, update, useStore } from '../store'
+import type { Machine, PaneKind, PaneSpec, SshHost } from '../types'
+import { Check, FolderIcon, KIND_LABEL, KindIcon, ServerIcon } from './icons'
 
 const KINDS: PaneKind[] = ['claude', 'shell', 'cloud']
 
@@ -108,7 +108,7 @@ function NewPane({ workspace, initialKind, machine }: { workspace?: number; init
         <label className="check">
           <input type="checkbox" checked={skip} onChange={(e) => setSkip(e.target.checked)} />
           <span>
-            Skip permission prompts <span className="muted">(--dangerously-skip-permissions)</span>
+            Skip permission <span className="muted">(--dangerously-skip-permissions)</span>
           </span>
         </label>
       )}
@@ -134,65 +134,140 @@ function NewPane({ workspace, initialKind, machine }: { workspace?: number; init
   )
 }
 
-function AddMachine(): React.JSX.Element {
-  const [target, setTarget] = useState('')
-  const [label, setLabel] = useState('')
-  const [busy, setBusy] = useState(false)
-  const ready = target.trim() !== '' && !busy
+interface Note {
+  text: string
+  bad: boolean
+}
 
-  const submit = async (): Promise<void> => {
-    if (!ready) return
-    setBusy(true)
-    const before = new Set(getStore().state.machines.map((m) => m.id))
-    const reply = await run({ op: 'addMachine', target: target.trim(), label: label.trim() || undefined })
-    setBusy(false)
-    if (!reply) return
-    update({ dialog: null })
-    window.setTimeout(() => {
-      const added = getStore().state.machines.find((m) => !before.has(m.id))
-      if (added) void run({ op: 'checkMachine', machine: added.id })
-    }, 150)
+const AUTH_NOTE = 'Added. It asks for a password or passphrase inside each pane. Ports and Changes need a key that works without one.'
+
+function AddMachine(): React.JSX.Element {
+  const machines = useStore((s) => s.state.machines)
+  const [hosts, setHosts] = useState<SshHost[] | null>(null)
+  const [typed, setTyped] = useState('')
+  const [adding, setAdding] = useState<string[]>([])
+  const [notes, setNotes] = useState<Record<string, Note>>({})
+
+  useEffect(() => {
+    call({ op: 'listSshHosts' })
+      .then((reply) => setHosts(reply.kind === 'sshHosts' ? reply.hosts : []))
+      .catch(() => setHosts([]))
+  }, [])
+
+  const added = (target: string): boolean => machines.some((m) => m.target === target)
+
+  const add = async (raw: string): Promise<void> => {
+    const target = raw.trim()
+    if (!target || adding.includes(target) || added(target)) return
+    const saved = async (): Promise<Machine | undefined> => {
+      const reply = await call({ op: 'getState' })
+      return reply.kind === 'state' ? reply.state.machines.find((m) => m.target === target) : undefined
+    }
+    setAdding((list) => [...list, target])
+    let note: Note | undefined
+    try {
+      await call({ op: 'addMachine', target })
+      const machine = await saved()
+      if (machine) {
+        await call({ op: 'checkMachine', machine: machine.id })
+        const checked = await saved()
+        if (checked?.status === 'auth') note = { text: AUTH_NOTE, bad: false }
+        if (checked?.status === 'error') {
+          await call({ op: 'removeMachine', machine: machine.id })
+          note = {
+            text: `Couldn't add ${target}: ${checked.detail ?? 'ssh gave no reason'}. Check that "ssh ${target}" connects in a terminal, then add it again.`,
+            bad: true
+          }
+        }
+      }
+    } catch (err) {
+      note = { text: String(err), bad: true }
+    }
+    setAdding((list) => list.filter((t) => t !== target))
+    setNotes(({ [target]: _, ...rest }) => (note ? { ...rest, [target]: note } : rest))
+    if (!note?.bad) setTyped((now) => (now.trim() === target ? '' : now))
+  }
+
+  const listed = new Set(hosts?.map((h) => h.alias))
+  const message = (target: string): React.JSX.Element | null => {
+    const note = notes[target]
+    return note ? <div className={`host-note${note.bad ? ' bad' : ''}`}>{note.text}</div> : null
   }
 
   return (
-    <form
-      className="dialog"
-      onSubmit={(e) => {
-        e.preventDefault()
-        void submit()
-      }}
-    >
-      <h2>Add machine</h2>
-      <p className="muted">
-        Work on another computer over SSH, next to your local workspaces. Nmux runs your own <code>ssh</code>, with your
-        config and keys.
-      </p>
-      <label>
-        <span>SSH target</span>
-        <input value={target} onChange={(e) => setTarget(e.target.value)} placeholder="workbox, you@server or ssh://you@server:2222" autoFocus spellCheck={false} />
-        <span className="muted small">
-          Whatever you type after <code>ssh</code> in a terminal. Check that it connects there first.
-        </span>
-      </label>
-      <label>
-        <span>
-          Name <span className="muted">(optional)</span>
-        </span>
-        <input value={label} onChange={(e) => setLabel(e.target.value)} placeholder="The host name" maxLength={80} />
-      </label>
-      <span className="muted small">
-        Nothing is installed on the machine. With tmux there, panes keep running when the connection drops. A password
-        or key passphrase is asked for inside the pane.
-      </span>
-      <div className="row end">
-        <button type="button" className="btn" onClick={() => update({ dialog: null })}>
-          Cancel
-        </button>
-        <button type="submit" className="btn primary" disabled={!ready}>
-          {busy ? 'Adding…' : 'Add'}
+    <div className="dialog">
+      <div className="row">
+        <h2 className="grow">Add a machine</h2>
+        <button className="esc" onClick={() => update({ dialog: null })}>
+          Esc
         </button>
       </div>
-    </form>
+      <p className="muted">
+        A server, a VPS, a box at home: Nmux reaches it with your own <code>ssh</code>, and nothing is installed there.
+        With tmux on it, panes keep running while this computer sleeps.
+      </p>
+      <div className="field">
+        <span>{hosts === null ? 'Reading ~/.ssh/config…' : hosts.length > 0 ? 'From your ssh config' : 'Your ssh config lists no hosts'}</span>
+        {hosts !== null && hosts.length > 0 && (
+          <div className="host-list">
+            {hosts.map((h) => {
+              const done = added(h.alias)
+              const busy = adding.includes(h.alias)
+              return (
+                <div key={h.alias}>
+                  <div className={`host-row${done || busy ? '' : ' idle'}`} onClick={() => void add(h.alias)}>
+                    <ServerIcon />
+                    <span className="host-name">{h.alias}</span>
+                    <span className="host-sub">{[h.user, h.hostname].filter(Boolean).join('@')}</span>
+                    {busy ? (
+                      <span className="host-state">
+                        <span className="spinner" /> Connecting
+                      </span>
+                    ) : done ? (
+                      <span className="host-state ok">
+                        <Check /> Added
+                      </span>
+                    ) : (
+                      <span className="btn">Add</span>
+                    )}
+                  </div>
+                  {message(h.alias)}
+                </div>
+              )
+            })}
+          </div>
+        )}
+      </div>
+      <form
+        className="field"
+        onSubmit={(e) => {
+          e.preventDefault()
+          void add(typed)
+        }}
+      >
+        <span>Or type how ssh reaches it</span>
+        <div className="row">
+          <input
+            value={typed}
+            onChange={(e) => {
+              setTyped(e.target.value)
+              setNotes((all) => Object.fromEntries(Object.entries(all).filter(([target, note]) => listed.has(target) || !note.bad)))
+            }}
+            placeholder="user@host"
+            autoFocus
+            spellCheck={false}
+          />
+          <button type="submit" className="btn primary" disabled={typed.trim() === '' || adding.includes(typed.trim())}>
+            {adding.includes(typed.trim()) ? 'Connecting…' : 'Add'}
+          </button>
+        </div>
+        {Object.keys(notes)
+          .filter((target) => !listed.has(target))
+          .map((target) => (
+            <div key={target}>{message(target)}</div>
+          ))}
+      </form>
+    </div>
   )
 }
 
@@ -200,7 +275,10 @@ function Help(): React.JSX.Element {
   return (
     <div className="dialog">
       <h2>Keyboard</h2>
-      <p className="muted">Press Ctrl+B, release, then one of these. Everything is also on the mouse.</p>
+      <p className="muted">
+        Press Ctrl+B, release, then one of these. Everything is also on the mouse. Without Ctrl+B: Ctrl+Shift+O splits
+        right, Ctrl+Shift+E splits down.
+      </p>
       <div className="keys">
         {BINDINGS.map(([key, what]) => (
           <div key={key}>

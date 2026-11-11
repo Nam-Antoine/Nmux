@@ -2,8 +2,9 @@ import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { appWindow, openCloudUrl } from '../api'
 import { activeTab, activeWorkspace, leaves, paneAddress, rollup, run, tabLabel, togglePanel, update, useStore } from '../store'
 import { terminals } from '../terminals'
-import type { LayoutNode, Pane, PaneId, Tab, Workspace } from '../types'
+import type { LayoutNode, Pane, PaneId, Side, Tab, Workspace } from '../types'
 import { BranchIcon, Close, FilesIcon, FolderIcon, KIND_LABEL, KindIcon, Monitor, Play, Plus, ServerIcon, PortsIcon, SidebarIcon, SplitDown, SplitRight, StateDot, WinClose, WinMax, WinMin, Zoom } from './icons'
+import { ContextMenu } from './ContextMenu'
 import { InlineEdit } from './InlineEdit'
 import { SidePanel } from './SidePanel'
 
@@ -131,7 +132,7 @@ function TabBar({ ws, current }: { ws: Workspace; current: Tab }): React.JSX.Ele
               <button
                 onClick={() => add({ op: 'createTab', workspace: ws.id, pane: { kind: 'claude', skipPermissions: true } })}
               >
-                <KindIcon kind="claude" /> Claude Code, skip permission prompts
+                <KindIcon kind="claude" /> Claude Code, skip permission
               </button>
               <button onClick={() => add({ op: 'createTab', workspace: ws.id, pane: { kind: 'shell' } })}>
                 <KindIcon kind="shell" /> Shell
@@ -203,11 +204,92 @@ function ExitedOverlay({ pane }: { pane: Pane }): React.JSX.Element {
   )
 }
 
+interface Drop {
+  target: PaneId
+  side: Side | 'center'
+  box: { left: number; top: number; width: number; height: number }
+}
+
+function dropAt(x: number, y: number, moving: PaneId): Drop | null {
+  const el = document
+    .elementsFromPoint(x, y)
+    .map((e) => e.closest<HTMLElement>('.pane[data-pane]'))
+    .find(Boolean)
+  const target = Number(el?.dataset.pane)
+  if (!el || target === moving) return null
+  const r = el.getBoundingClientRect()
+  const fx = (x - r.left) / r.width
+  const fy = (y - r.top) / r.height
+  const edges: Array<[number, Side]> = [
+    [fx, 'left'],
+    [1 - fx, 'right'],
+    [fy, 'up'],
+    [1 - fy, 'down']
+  ]
+  const [distance, side] = edges.reduce((near, edge) => (edge[0] < near[0] ? edge : near))
+  if (distance > 0.25) return { target, side: 'center', box: { left: r.left, top: r.top, width: r.width, height: r.height } }
+  const across = side === 'left' || side === 'right'
+  return {
+    target,
+    side,
+    box: {
+      left: side === 'right' ? r.left + r.width / 2 : r.left,
+      top: side === 'down' ? r.top + r.height / 2 : r.top,
+      width: across ? r.width / 2 : r.width,
+      height: across ? r.height : r.height / 2
+    }
+  }
+}
+
+function Grip({ pane }: { pane: PaneId }): React.JSX.Element {
+  const [moving, setMoving] = useState(false)
+  const [drop, setDrop] = useState<Drop | null>(null)
+  const stop = (): void => {
+    setMoving(false)
+    setDrop(null)
+  }
+
+  useEffect(() => {
+    if (!moving) return
+    const onKey = (e: KeyboardEvent): void => {
+      if (e.key !== 'Escape') return
+      e.preventDefault()
+      e.stopPropagation()
+      stop()
+    }
+    window.addEventListener('keydown', onKey, true)
+    return () => window.removeEventListener('keydown', onKey, true)
+  }, [moving])
+
+  return (
+    <>
+      <div
+        className={`pane-grip${moving ? ' moving' : ''}`}
+        title="Drag onto another pane: the middle swaps them, an edge places this pane beside it"
+        onPointerDown={(e) => {
+          e.currentTarget.setPointerCapture(e.pointerId)
+          setMoving(true)
+        }}
+        onPointerMove={(e) => moving && setDrop(dropAt(e.clientX, e.clientY, pane))}
+        onPointerCancel={stop}
+        onPointerUp={() => {
+          if (moving && drop) {
+            void run(drop.side === 'center' ? { op: 'swapPanes', a: pane, b: drop.target } : { op: 'movePane', pane, target: drop.target, side: drop.side })
+          }
+          stop()
+        }}
+      />
+      {drop && <div className="pane-drop" style={drop.box} />}
+    </>
+  )
+}
+
 function PaneView({ id, focused, solo }: { id: PaneId; focused: boolean; solo: boolean }): React.JSX.Element | null {
   const pane = useStore((s) => s.panes.get(id))
   const zoomed = useStore((s) => activeTab(s)?.zoomed ?? false)
   const address = useStore((s) => paneAddress(s, id))
   const hostRef = useRef<HTMLDivElement>(null)
+  const [menu, setMenu] = useState<{ x: number; y: number } | null>(null)
 
   useLayoutEffect(() => {
     const host = hostRef.current
@@ -231,6 +313,9 @@ function PaneView({ id, focused, solo }: { id: PaneId; focused: boolean; solo: b
       void run({ op: 'closePane', pane: id })
     }
   }
+  const split = (dir: 'right' | 'down'): void => void run({ op: 'splitPane', target: id, dir, pane: { kind: 'shell' } })
+  const zoom = (): void => void run({ op: 'toggleZoom', pane: id })
+  const canZoom = !solo || zoomed
 
   return (
     <div
@@ -240,7 +325,32 @@ function PaneView({ id, focused, solo }: { id: PaneId; focused: boolean; solo: b
         if (!focused) void run({ op: 'focusPane', pane: id })
       }}
     >
-      <div className="pane-head">
+      <div
+        className="pane-head"
+        onContextMenu={(e) => {
+          e.preventDefault()
+          setMenu({ x: e.clientX, y: e.clientY })
+        }}
+      >
+        {!solo && !zoomed && <Grip pane={id} />}
+        {menu && (
+          <ContextMenu at={menu} onClose={() => setMenu(null)}>
+            <button onClick={() => split('right')}>
+              <SplitRight /> Split right
+            </button>
+            <button onClick={() => split('down')}>
+              <SplitDown /> Split down
+            </button>
+            {canZoom && (
+              <button onClick={zoom}>
+                <Zoom /> {zoomed ? 'Unzoom' : 'Zoom'}
+              </button>
+            )}
+            <button className="danger" onClick={close}>
+              <Close /> Close pane
+            </button>
+          </ContextMenu>
+        )}
         <KindIcon kind={pane.kind} />
         <span className="pane-kind">{KIND_LABEL[pane.kind]}</span>
         <span className="pane-cwd">{pane.cwd}</span>
@@ -249,7 +359,7 @@ function PaneView({ id, focused, solo }: { id: PaneId; focused: boolean; solo: b
             {address}
           </span>
         )}
-        {pane.skipPermissions && <span className="badge" title="Runs with --dangerously-skip-permissions">skip-permissions</span>}
+        {pane.skipPermissions && <span className="badge" title="Runs with --dangerously-skip-permissions">skip permission</span>}
         {pane.status === 'exited' && !(pane.kind === 'cloud' && pane.cloudSessionId) ? (
           <button className="btn small-btn resume-btn" onClick={() => void run({ op: 'restartPane', pane: id })}>
             <Play /> {pane.kind === 'claude' ? 'Resume' : 'Start'}
@@ -258,14 +368,14 @@ function PaneView({ id, focused, solo }: { id: PaneId; focused: boolean; solo: b
           <StateDot state={pane.agent} exited={pane.status === 'exited'} />
         )}
         <span className="pane-actions">
-          <button className="icon-btn" title="Split right (Ctrl+B, v)" onClick={() => void run({ op: 'splitPane', target: id, dir: 'right', pane: { kind: 'shell' } })}>
+          <button className="icon-btn" title="Split right (Ctrl+Shift+O)" onClick={() => split('right')}>
             <SplitRight />
           </button>
-          <button className="icon-btn" title="Split down (Ctrl+B, -)" onClick={() => void run({ op: 'splitPane', target: id, dir: 'down', pane: { kind: 'shell' } })}>
+          <button className="icon-btn" title="Split down (Ctrl+Shift+E)" onClick={() => split('down')}>
             <SplitDown />
           </button>
-          {(!solo || zoomed) && (
-            <button className={`icon-btn${zoomed ? ' on' : ''}`} title="Zoom (Ctrl+B, z)" onClick={() => void run({ op: 'toggleZoom', pane: id })}>
+          {canZoom && (
+            <button className={`icon-btn${zoomed ? ' on' : ''}`} title="Zoom (Ctrl+B, z)" onClick={zoom}>
               <Zoom />
             </button>
           )}

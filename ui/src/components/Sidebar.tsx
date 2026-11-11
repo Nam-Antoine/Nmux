@@ -2,6 +2,7 @@ import { useState } from 'react'
 import { rollup, run, update, useStore, workspacePanes } from '../store'
 import type { AgentState, Machine, Pane, Workspace } from '../types'
 import { Avatar, Chevron, Clock, Close, FilesIcon, Keyboard, Pencil, PortsIcon, KindIcon, Monitor, Play, Plus, Search, ServerIcon, SidebarIcon, StateDot } from './icons'
+import { ContextMenu } from './ContextMenu'
 import { InlineEdit } from './InlineEdit'
 
 function tail(path: string): string {
@@ -43,21 +44,9 @@ function WorkspaceRow({ ws, active }: { ws: Workspace; active: boolean }): React
       title={`n${ws.number} · ${ws.cwd}`}
     >
       {menu && (
-        <div
-          onClick={(e) => {
-            e.stopPropagation()
-            setMenu(null)
-          }}
-          onContextMenu={(e) => {
-            e.preventDefault()
-            e.stopPropagation()
-            setMenu(null)
-          }}
-        >
-          <div className="menu-backdrop" />
-          <div className="menu context" style={{ left: menu.x, top: Math.min(menu.y, window.innerHeight - 150) }}>
+        <ContextMenu at={menu} onClose={() => setMenu(null)}>
             <button onClick={() => void run({ op: 'createTab', workspace: ws.id, pane: { kind: 'claude' } })}>
-              <KindIcon kind="claude" /> New Claude tab
+              <KindIcon kind="claude" /> New Claude Code tab
             </button>
             <button onClick={() => void run({ op: 'createTab', workspace: ws.id, pane: { kind: 'shell' } })}>
               <KindIcon kind="shell" /> New shell tab
@@ -68,8 +57,7 @@ function WorkspaceRow({ ws, active }: { ws: Workspace; active: boolean }): React
             <button className="danger" onClick={close}>
               <Close /> Close workspace
             </button>
-          </div>
-        </div>
+        </ContextMenu>
       )}
       <Avatar name={ws.name} />
       {renaming ? (

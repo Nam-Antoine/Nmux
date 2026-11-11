@@ -80,19 +80,30 @@ impl Node {
     }
 
     pub fn split(&mut self, target: PaneId, dir: Dir, new: PaneId) -> bool {
+        self.insert(target, if dir == Dir::Right { Side::Right } else { Side::Down }, new)
+    }
+
+    fn insert(&mut self, target: PaneId, side: Side, new: PaneId) -> bool {
         match self {
             Node::Leaf { pane } if *pane == target => {
-                *self = Node::Split {
-                    dir,
-                    ratio: 0.5,
-                    a: Box::new(Node::leaf(target)),
-                    b: Box::new(Node::leaf(new)),
-                };
+                let dir = if matches!(side, Side::Left | Side::Right) { Dir::Right } else { Dir::Down };
+                let (a, b) = if matches!(side, Side::Left | Side::Up) { (new, target) } else { (target, new) };
+                *self = Node::Split { dir, ratio: 0.5, a: Box::new(Node::leaf(a)), b: Box::new(Node::leaf(b)) };
                 true
             }
             Node::Leaf { .. } => false,
-            Node::Split { a, b, .. } => a.split(target, dir, new) || b.split(target, dir, new),
+            Node::Split { a, b, .. } => a.insert(target, side, new) || b.insert(target, side, new),
         }
+    }
+
+    pub fn move_beside(&mut self, moved: PaneId, target: PaneId, side: Side) -> bool {
+        if moved == target || !self.contains(target) {
+            return false;
+        }
+        let Some(mut rest) = self.clone().remove(moved).filter(|rest| rest != self) else { return false };
+        rest.insert(target, side, moved);
+        *self = rest;
+        true
     }
 
     pub fn remove(self, id: PaneId) -> Option<Node> {
@@ -297,6 +308,20 @@ mod tests {
     fn rects_cover_the_unit_square() {
         let area: f32 = three().rects().iter().map(|(_, r)| r.w * r.h).sum();
         assert!((area - 1.0).abs() < 1e-5);
+    }
+
+    #[test]
+    fn a_pane_is_placed_beside_another() {
+        let mut t = three();
+        assert!(t.move_beside(p(3), p(1), Side::Left));
+        assert_eq!(t.panes(), vec![p(3), p(1), p(2)]);
+        assert_eq!(t.neighbor(p(3), Side::Right), Some(p(1)));
+        assert!(t.move_beside(p(3), p(2), Side::Down));
+        assert_eq!(t, three());
+        assert!(t.move_beside(p(1), p(3), Side::Up));
+        assert_eq!(t.neighbor(p(1), Side::Down), Some(p(3)));
+        assert!(t.is_valid());
+        assert!(!t.move_beside(p(1), p(1), Side::Up) && !t.move_beside(p(9), p(1), Side::Up) && !t.move_beside(p(1), p(9), Side::Up));
     }
 
     #[test]

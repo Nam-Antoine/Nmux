@@ -491,6 +491,15 @@ impl State {
         }
     }
 
+    pub fn move_pane(&mut self, pane: PaneId, target: PaneId, side: Side) -> Res<()> {
+        let tab = self.tab_of_mut(pane)?;
+        if tab.layout.move_beside(pane, target, side) {
+            Ok(())
+        } else {
+            Err(ModelError::Invalid("panes are not in the same tab"))
+        }
+    }
+
     pub fn set_ratio(&mut self, tab: TabId, path: &[u8], ratio: f32) -> Res<()> {
         let (wi, ti) = self.locate_tab(tab).ok_or(ModelError::NoTab)?;
         if self.workspaces[wi].tabs[ti].layout.set_ratio(path, ratio) {
