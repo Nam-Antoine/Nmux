@@ -8,6 +8,7 @@ use nmux_proto::{DirEntry, FilePreview};
 
 use crate::files;
 use crate::launch::{find_on_path, Launch};
+use crate::relay::REMOTE_NC;
 
 type Env = BTreeMap<String, String>;
 
@@ -56,7 +57,7 @@ pub(crate) fn cd(cwd: &str) -> String {
     }
 }
 
-pub fn script(cwd: &str, session: &str, program: &Program) -> String {
+pub fn script(cwd: &str, session: &str, program: &Program, note: Option<&str>) -> String {
     let run = match program {
         Program::Shell => None,
         Program::Claude { session_id, resume, extra_args, skip_permissions } => {
@@ -80,14 +81,15 @@ pub fn script(cwd: &str, session: &str, program: &Program) -> String {
     };
     let in_tmux = run.as_deref().map(|r| format!(" {}", sh_quote(r))).unwrap_or_default();
     let plain = run.unwrap_or_else(|| "exec ${SHELL:-sh} -l".to_string());
+    let noted = note.map(|note| format!("mkdir -p ~/.nmux/panes && (umask 077; echo {} > ~/.nmux/panes/{}); ", sh_quote(note), sh_quote(session))).unwrap_or_default();
     format!(
-        "{cd} || exit 1; \
+        "{noted}{cd} || exit 1; \
          if command -v tmux >/dev/null 2>&1; then \
          exec tmux -u new-session -A -s {session}{in_tmux} \
          \\; set-option status off \
          \\; set-option set-titles on \
          \\; set-option set-titles-string '#{{pane_title}}'; \
-         else {plain}; fi",
+         else export NMUX_SESSION={session}; {plain}; fi",
         cd = cd(cwd),
         session = sh_quote(session),
     )
@@ -97,21 +99,11 @@ fn ssh_bin(env: &Env) -> String {
     find_on_path("ssh", env).map(|p| p.to_string_lossy().into_owned()).unwrap_or_else(|| "ssh".into())
 }
 
-pub fn launch(target: &str, script: &str, env: &Env) -> Launch {
-    Launch {
-        file: ssh_bin(env),
-        args: vec![
-            "-t".into(),
-            "-C".into(),
-            "-o".into(),
-            "ServerAliveInterval=30".into(),
-            "-o".into(),
-            "ServerAliveCountMax=4".into(),
-            "--".into(),
-            target.into(),
-            format!("sh -c {}", sh_quote(script)),
-        ],
-    }
+pub fn launch(target: &str, script: &str, forward: Option<&str>, env: &Env) -> Launch {
+    let mut args: Vec<String> = ["-t", "-C", "-o", "ServerAliveInterval=30", "-o", "ServerAliveCountMax=4"].map(String::from).into();
+    args.extend(forward.into_iter().flat_map(|forward| ["-R".to_string(), forward.to_string()]));
+    args.extend(["--".to_string(), target.to_string(), format!("sh -c {}", sh_quote(script))]);
+    Launch { file: ssh_bin(env), args }
 }
 
 fn unattended(target: &str, remote_command: &str, env: &Env) -> Command {
@@ -146,8 +138,16 @@ pub struct Probe {
     pub claude: bool,
 }
 
-const PROBE: &str = "echo nmux-ok; command -v tmux >/dev/null 2>&1 && echo nmux-tmux; \
-                     ${SHELL:-sh} -lic 'command -v claude' >/dev/null 2>&1 && echo nmux-claude; true";
+const PROBE: &str = r#"echo nmux-ok; command -v tmux >/dev/null 2>&1 && echo nmux-tmux
+new="$HOME/.nmux/bin/.nc.$$"
+command -v bash >/dev/null 2>&1 && mkdir -p ~/.nmux/bin && cat > "$new" && chmod 755 "$new" && mv -f "$new" ~/.nmux/bin/nc
+found=$(${SHELL:-sh} -lic 'command -v claude >/dev/null 2>&1 && echo nmux-claude; [ "$(command -v nc)" = "$HOME/.nmux/bin/nc" ] && echo nmux-nc' 2>/dev/null </dev/null)
+echo "$found"
+case "$found" in *nmux-nc*) exit 0;; esac
+[ -x ~/.nmux/bin/nc ] || exit 0
+case "${SHELL##*/}" in zsh) rc=~/.zshrc;; bash) rc=~/.bashrc;; *) rc=~/.profile;; esac
+grep -qs '.nmux/bin' "$rc" || printf '\nexport PATH="$HOME/.nmux/bin:$PATH"\n' >> "$rc"
+true"#;
 
 pub fn read_probe(stdout: &str, stderr: &str) -> Probe {
     let has = |mark: &str| stdout.lines().any(|l| l.trim() == mark);
@@ -164,9 +164,17 @@ pub fn read_probe(stdout: &str, stderr: &str) -> Probe {
     }
 }
 
+fn fed(target: &str, script: &str, bytes: &[u8], env: &Env) -> std::io::Result<std::process::Output> {
+    let command = format!("sh -c {}", sh_quote(script));
+    let mut child = unattended(target, &command, env).stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::piped()).spawn()?;
+    if let Some(mut stdin) = child.stdin.take() {
+        let _ = stdin.write_all(bytes);
+    }
+    child.wait_with_output()
+}
+
 pub fn probe(target: &str, env: &Env) -> Probe {
-    let command = format!("sh -c {}", sh_quote(PROBE));
-    match unattended(target, &command, env).stdin(Stdio::null()).output() {
+    match fed(target, PROBE, REMOTE_NC.as_bytes(), env) {
         Ok(out) => read_probe(&String::from_utf8_lossy(&out.stdout), &String::from_utf8_lossy(&out.stderr)),
         Err(err) => Probe {
             status: MachineStatus::Error,
@@ -428,8 +436,10 @@ pub fn end_sessions(target: String, sessions: Vec<String>, env: Env) {
         return;
     }
     std::thread::spawn(move || {
-        let kills: Vec<String> =
-            sessions.iter().map(|s| format!("tmux kill-session -t {} 2>/dev/null", sh_quote(&format!("={s}")))).collect();
+        let kills: Vec<String> = sessions
+            .iter()
+            .map(|s| format!("tmux kill-session -t {} 2>/dev/null; rm -f ~/.nmux/panes/{}", sh_quote(&format!("={s}")), sh_quote(s)))
+            .collect();
         let command = format!("sh -c {}", sh_quote(&format!("{}; true", kills.join("; "))));
         let _ = unattended(&target, &command, &env).stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::null()).status();
     });
@@ -440,17 +450,7 @@ pub fn upload(target: &str, name: &str, bytes: &[u8], env: &Env) -> Result<Strin
         return Err("bad file name".into());
     }
     let path = format!("/tmp/nmux-{name}");
-    let command = format!("sh -c {}", sh_quote(&format!("umask 077; cat > {}", sh_quote(&path))));
-    let mut child = unattended(target, &command, env)
-        .stdin(Stdio::piped())
-        .stdout(Stdio::null())
-        .stderr(Stdio::piped())
-        .spawn()
-        .map_err(|e| format!("could not run ssh: {e}"))?;
-    if let Some(mut stdin) = child.stdin.take() {
-        stdin.write_all(bytes).map_err(|e| format!("could not send the image: {e}"))?;
-    }
-    let out = child.wait_with_output().map_err(|e| e.to_string())?;
+    let out = fed(target, &format!("umask 077; cat > {}", sh_quote(&path)), bytes, env).map_err(|e| format!("could not run ssh: {e}"))?;
     if !out.status.success() {
         return Err(format!("could not copy the image to the machine: {}", last_line(&out.stderr, "ssh failed")));
     }
@@ -638,28 +638,30 @@ mod tests {
 
     #[test]
     fn a_shell_pane_uses_tmux_when_it_is_there() {
-        let s = script("/srv/app", "nmux-7-123", &Program::Shell);
-        assert!(s.starts_with("cd '/srv/app' || exit 1; "), "{s}");
+        let s = script("/srv/app", "nmux-7-123", &Program::Shell, Some("40123 secret 7"));
+        assert!(s.starts_with("mkdir -p ~/.nmux/panes && (umask 077; echo '40123 secret 7' > ~/.nmux/panes/'nmux-7-123'); cd '/srv/app' || exit 1; "), "{s}");
         assert!(s.contains("exec tmux -u new-session -A -s 'nmux-7-123' \\; set-option status off"), "{s}");
-        assert!(s.ends_with("else exec ${SHELL:-sh} -l; fi"), "{s}");
+        assert!(s.ends_with("else export NMUX_SESSION='nmux-7-123'; exec ${SHELL:-sh} -l; fi"), "{s}");
     }
 
     #[test]
     fn a_claude_pane_starts_then_resumes_its_own_conversation() {
         let extra = vec!["--model".to_string(), "it's".to_string(), SKIP_PERMISSIONS_FLAG.to_string()];
         let start = Program::Claude { session_id: "uuid-1", resume: false, extra_args: &extra, skip_permissions: true };
-        let s = script("~/proj", "nmux-9-1", &start);
-        assert!(s.contains("else ${SHELL:-sh} -lic 'claude --session-id '\\''uuid-1'\\'' --dangerously-skip-permissions "), "{s}");
+        let s = script("~/proj", "nmux-9-1", &start, None);
+        assert!(s.starts_with("cd ~/'proj' || exit 1; "), "{s}");
+        assert!(s.contains("; ${SHELL:-sh} -lic 'claude --session-id '\\''uuid-1'\\'' --dangerously-skip-permissions "), "{s}");
         assert_eq!(s.matches(SKIP_PERMISSIONS_FLAG).count(), 2, "once per branch, not repeated from extra args: {s}");
 
         let resume = Program::Claude { session_id: "uuid-1", resume: true, extra_args: &[], skip_permissions: false };
-        let s = script("~/proj", "nmux-9-1", &resume);
+        let s = script("~/proj", "nmux-9-1", &resume, None);
         assert!(s.contains("claude --resume '\\''uuid-1'\\'' || claude'"), "{s}");
     }
 
     #[test]
     fn the_target_cannot_become_an_option() {
-        let l = launch("-oProxyCommand=evil", "true", &Env::new());
+        let l = launch("-oProxyCommand=evil", "true", Some("127.0.0.1:40123:127.0.0.1:5000"), &Env::new());
+        assert_eq!(l.args[6..8], ["-R", "127.0.0.1:40123:127.0.0.1:5000"]);
         let dashes = l.args.iter().position(|a| a == "--").unwrap();
         assert_eq!(l.args[dashes + 1], "-oProxyCommand=evil");
         assert_eq!(l.args.last().unwrap(), "sh -c 'true'");

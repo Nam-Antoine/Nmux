@@ -142,10 +142,12 @@ pub fn pane_env(base: &Env, pane: PaneId) -> Env {
     env
 }
 
+pub fn beside(name: &str) -> Option<PathBuf> {
+    Some(std::env::current_exe().ok()?.parent()?.join(format!("{name}{}", std::env::consts::EXE_SUFFIX)))
+}
+
 pub fn offer_tmux() {
-    let Some(dir) = std::env::current_exe().ok().and_then(|exe| Some(exe.parent()?.to_path_buf())) else { return };
-    let ext = std::env::consts::EXE_SUFFIX;
-    let (nc, tmux) = (dir.join(format!("nc{ext}")), dir.join(format!("tmux{ext}")));
+    let (Some(nc), Some(tmux)) = (beside("nc"), beside("tmux")) else { return };
     let stamp = |path: &Path| path.metadata().ok().and_then(|m| Some((m.len(), m.modified().ok()?)));
     let fresh = matches!((stamp(&nc), stamp(&tmux)), (Some(nc), Some(tmux)) if nc.0 == tmux.0 && nc.1 <= tmux.1);
     if !fresh {

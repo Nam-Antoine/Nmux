@@ -77,6 +77,14 @@ Windows, as tmux commands are written for a POSIX shell. Commands about tmux's o
 keys, options, layouts and copy mode have nothing to map to: `nc` refuses
 them, and `tmux` ignores the ones that only change settings.
 
+Machines get `nc` too. Each time Nmux checks a machine it puts a small `nc`
+script in `~/.nmux/bin` there and adds that folder to the shell's `PATH`. In
+a pane on the machine it is the same tool, sent over the pane's own SSH
+connection to the Nmux on your computer, so an agent there can read and
+drive every pane you have. Outside a pane it runs the machine's own `nc`.
+It needs `bash` on the machine. Whoever can use that account on the machine
+can drive your panes while a pane to it is open.
+
 A message sent from one pane to an agent starts with who sent it and how to
 reply, so agents in different workspaces can ask each other questions. `nc` is
 on the PATH of every pane.

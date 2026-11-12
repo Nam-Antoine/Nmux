@@ -44,6 +44,11 @@ tmux commands
   Every pane also has a tmux command that is this same tool, and the TMUX
   and TMUX_PANE variables, so what is written for tmux drives Nmux.
 
+Other machines
+  Nmux puts nc on every machine it knows, in ~/.nmux/bin. In a pane there
+  it is this same tool, talking to the Nmux on your computer. Outside a
+  pane it runs the machine's own nc.
+
 More
   whoami                      the address of the pane this runs in
   api '<json>'                one raw request to the server
@@ -142,7 +147,7 @@ impl Args {
     }
 
     fn json(&self) -> bool {
-        self.has("--json") || !std::io::stdout().is_terminal()
+        self.has("--json") || !(std::io::stdout().is_terminal() || std::env::var_os("NMUX_TTY").is_some())
     }
 }
 

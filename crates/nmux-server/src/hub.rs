@@ -16,6 +16,7 @@ use crate::ports::{self, Forwards};
 use crate::launch::{self, ClaudeOptions};
 use crate::persist;
 use crate::pty::PtyProcess;
+use crate::relay::Relay;
 use crate::remote;
 use crate::sshconfig;
 use crate::screen::{Screen, DEFAULT_COLS, DEFAULT_ROWS};
@@ -51,6 +52,7 @@ pub struct Hub {
     config: Config,
     processes: Mutex<sysinfo::System>,
     forwards: Forwards,
+    relay: Option<Relay>,
     pub shutdown: watch::Sender<bool>,
 }
 
@@ -102,6 +104,7 @@ impl Hub {
         );
         let hub = Arc::new(Hub {
             forwards,
+            relay: Relay::start(&config.data_dir).ok(),
             inner: Mutex::new(Inner {
                 state,
                 runtimes: HashMap::new(),
@@ -719,7 +722,9 @@ impl Hub {
                     _ => remote::Program::Shell,
                 };
                 let session = remote::tmux_session(&remote::owner(&self.config.env), id, pane.created_at);
-                remote::launch(target.as_deref().unwrap_or("removed-machine.invalid"), &remote::script(&pane.cwd, &session, &program), &env)
+                let link = self.relay.as_ref().map(|relay| relay.link(id));
+                let script = remote::script(&pane.cwd, &session, &program, link.as_ref().map(|link| link.note.as_str()));
+                remote::launch(target.as_deref().unwrap_or("removed-machine.invalid"), &script, link.as_ref().map(|link| link.forward.as_str()), &env)
             }
             (None, PaneKind::Claude) => launch::claude(
                 ClaudeOptions {
