@@ -128,6 +128,7 @@ pub struct ShellClaude {
     pub session_id: Option<String>,
     pub cwd: Option<String>,
     pub skip_permissions: bool,
+    pub extra_args: Vec<String>,
 }
 
 impl Pane {
@@ -639,6 +640,7 @@ impl State {
         p.claude_session_id = found.session_id.or(kept);
         p.claude_cwd = found.cwd;
         p.skip_permissions = found.skip_permissions;
+        p.extra_args = found.extra_args;
         *p != before
     }
 
@@ -975,7 +977,7 @@ mod tests {
         assert!(!s.set_detected(c.pane, Detected::Working, true));
         assert_eq!(s.panes[&c.pane].agent, AgentState::Unknown);
 
-        let found = || Some(ShellClaude { session_id: Some("abc".into()), cwd: Some("/w/sub".into()), skip_permissions: true });
+        let found = || Some(ShellClaude { session_id: Some("abc".into()), cwd: Some("/w/sub".into()), skip_permissions: true, extra_args: vec!["-n".into(), "Deploy".into()] });
         assert!(s.set_runs_claude(c.pane, found()) && !s.set_runs_claude(c.pane, found()));
         assert_eq!(s.panes[&c.pane].shown_kind(), PaneKind::Claude);
         assert!(s.set_detected(c.pane, Detected::Working, true));
@@ -988,6 +990,7 @@ mod tests {
         s.set_exited(c.pane, None);
         let p = &s.panes[&c.pane];
         assert_eq!((p.kind, p.cwd.as_str(), p.name.as_str(), p.claude_session_id.as_deref()), (PaneKind::Claude, "/w", "claude", Some("abc")));
+        assert!(p.extra_args.is_empty() && !p.skip_permissions, "the options are the ones claude runs with now");
     }
 
     #[test]

@@ -757,6 +757,7 @@ impl Hub {
             session_id: text("sessionId").filter(|id| !id.is_empty() && id.len() <= 64 && id.chars().all(|c| c.is_ascii_alphanumeric() || c == '-')),
             cwd: text("cwd").and_then(|cwd| validate::cwd(&cwd).ok()),
             skip_permissions: process.skip_permissions,
+            extra_args: validate::extra_args(&process.extra_args).unwrap_or_default(),
         }
     }
 

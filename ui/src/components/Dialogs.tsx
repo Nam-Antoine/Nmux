@@ -2,10 +2,85 @@ import { useEffect, useState } from 'react'
 import { call, pickFolder } from '../api'
 import { BINDINGS } from '../keys'
 import { run, update, useStore } from '../store'
-import type { Machine, PaneKind, PaneSpec, SshHost } from '../types'
-import { Check, FolderIcon, KIND_LABEL, KindIcon, ServerIcon } from './icons'
+import type { DirEntry, Machine, PaneKind, PaneSpec, SshHost } from '../types'
+import { Check, FolderIcon, KIND_LABEL, KindIcon, ServerIcon, Up } from './icons'
 
 const KINDS: PaneKind[] = ['claude', 'shell', 'cloud']
+
+function MachineFolder({ machine, cwd, setCwd }: { machine: Machine; cwd: string; setCwd: (cwd: string) => void }): React.JSX.Element {
+  const [place, setPlace] = useState('~')
+  const [shown, setShown] = useState('')
+  const [folders, setFolders] = useState<DirEntry[] | null>(null)
+  const [problem, setProblem] = useState<string | null>(null)
+
+  useEffect(() => {
+    let gone = false
+    setFolders(null)
+    setProblem(null)
+    call({ op: 'listDir', path: place, machine: machine.id })
+      .then((reply) => {
+        if (gone || reply.kind !== 'dir') return
+        setFolders(reply.entries.filter((e) => e.dir))
+        setShown(reply.path)
+        setCwd(reply.path)
+      })
+      .catch((err) => !gone && setProblem(String(err)))
+    return () => {
+      gone = true
+    }
+  }, [place, machine.id, setCwd])
+
+  const typed = cwd.trim() !== shown
+  const go = (): void => {
+    if (typed) setPlace(cwd.trim() || '~')
+  }
+  return (
+    <div className="field">
+      <span>Folder on {machine.label}</span>
+      <div className="row">
+        <button
+          type="button"
+          className="btn"
+          title="Up one folder"
+          disabled={shown === '' || shown === '/'}
+          onClick={() => setPlace(shown.replace(/\/[^/]+\/*$/, '') || '/')}
+        >
+          <Up />
+        </button>
+        <input
+          value={cwd}
+          onChange={(e) => setCwd(e.target.value)}
+          onBlur={go}
+          onKeyDown={(e) => {
+            if (e.key !== 'Enter' || !typed) return
+            e.preventDefault()
+            go()
+          }}
+          placeholder="~/project or /srv/app"
+          spellCheck={false}
+        />
+      </div>
+      <div className="folder-list">
+        {problem && <div className="tree-note">Could not look on {machine.label}: {problem}</div>}
+        {!problem && folders === null && <div className="tree-note">Looking on {machine.label}…</div>}
+        {folders?.length === 0 && <div className="tree-note">No folders in here.</div>}
+        {folders?.map((f) => (
+          <div key={f.name} className="tree-row" title={`Open ${f.name}`} onClick={() => setPlace(`${shown.replace(/\/+$/, '')}/${f.name}`)}>
+            <FolderIcon />
+            <span className="tree-name dir">{f.name}</span>
+          </div>
+        ))}
+      </div>
+      <span className="muted small">
+        The workspace opens in the folder shown above.{' '}
+        {machine.status === 'online' && !machine.tmux
+          ? 'tmux is not installed there, so panes stop when the connection drops. Install tmux to keep them running.'
+          : 'Panes run there inside tmux and keep going when the connection drops or Nmux closes.'}
+        {machine.status === 'online' && !machine.claude && ' Claude Code was not found on that machine.'}
+      </span>
+    </div>
+  )
+}
 
 function NewPane({ workspace, initialKind, machine }: { workspace?: number; initialKind: PaneKind; machine?: Machine }): React.JSX.Element {
   const [cwd, setCwd] = useState('')
@@ -43,18 +118,7 @@ function NewPane({ workspace, initialKind, machine }: { workspace?: number; init
     >
       <h2>{machine ? `New workspace on ${machine.label}` : needsFolder ? 'New workspace' : 'New tab'}</h2>
 
-      {machine && (
-        <label>
-          <span>Folder on {machine.label}</span>
-          <input value={cwd} onChange={(e) => setCwd(e.target.value)} placeholder="~/project or /srv/app" autoFocus spellCheck={false} />
-          <span className="muted small">
-            {machine.status === 'online' && !machine.tmux
-              ? 'tmux is not installed there, so panes stop when the connection drops. Install tmux to keep them running.'
-              : 'Panes run there inside tmux and keep going when the connection drops or Nmux closes.'}
-            {machine.status === 'online' && !machine.claude && ' Claude Code was not found on that machine.'}
-          </span>
-        </label>
-      )}
+      {machine && <MachineFolder machine={machine} cwd={cwd} setCwd={setCwd} />}
 
       {needsFolder && !machine && (
         <label>

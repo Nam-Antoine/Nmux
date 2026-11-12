@@ -1135,6 +1135,13 @@ textarea {
   color: var(--fg-2);
   font-size: 13px;
 }
+.folder-list {
+  height: 190px;
+  overflow: auto;
+  padding: 4px;
+  border: 1px solid var(--tab-border);
+  border-radius: 8px;
+}
 .dialog label.check {
   flex-direction: row;
   align-items: center;

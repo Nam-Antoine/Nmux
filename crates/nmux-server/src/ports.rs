@@ -116,9 +116,29 @@ fn is_claude(process: &sysinfo::Process) -> bool {
     }
 }
 
+const KEPT_OPTIONS: [&str; 6] = ["-n", "--name", "--model", "--permission-mode", "--add-dir", "--effort"];
+
+pub fn kept_options(args: &[String]) -> Vec<String> {
+    let mut kept = Vec::new();
+    let mut args = args.iter();
+    while let Some(arg) = args.next() {
+        match arg.split_once('=') {
+            Some((option, _)) if KEPT_OPTIONS.contains(&option) => kept.push(arg.clone()),
+            None if KEPT_OPTIONS.contains(&arg.as_str()) => {
+                if let Some(value) = args.next() {
+                    kept.extend([arg.clone(), value.clone()]);
+                }
+            }
+            _ => {}
+        }
+    }
+    kept
+}
+
 pub struct ClaudeProcess {
     pub pid: u32,
     pub skip_permissions: bool,
+    pub extra_args: Vec<String>,
     started: u64,
 }
 
@@ -134,8 +154,9 @@ pub fn running_claude(system: &mut sysinfo::System, pane_roots: &HashMap<u32, Pa
         if found.get(&pane).is_some_and(|first| first.started <= started) {
             continue;
         }
-        let skip_permissions = process.cmd().iter().any(|arg| arg == "--dangerously-skip-permissions");
-        found.insert(pane, ClaudeProcess { pid: pid.as_u32(), skip_permissions, started });
+        let args: Vec<String> = process.cmd().iter().skip(1).map(|arg| arg.to_string_lossy().into_owned()).collect();
+        let skip_permissions = args.iter().any(|arg| arg == "--dangerously-skip-permissions");
+        found.insert(pane, ClaudeProcess { pid: pid.as_u32(), skip_permissions, extra_args: kept_options(&args), started });
     }
     found
 }
@@ -378,6 +399,12 @@ impl Forwards {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_typed_claude_keeps_its_options_but_not_its_prompt() {
+        let args = |text: &str| text.split(' ').map(str::to_string).collect::<Vec<_>>();
+        assert_eq!(kept_options(&args("-n Deployment --resume abc --model=opus fix-it -c --add-dir ../x --effort")), args("-n Deployment --model=opus --add-dir ../x"));
+    }
 
     #[cfg(windows)]
     #[test]
