@@ -1,5 +1,5 @@
 import { send } from './api'
-import { activeTab, activeWorkspace, getStore, run, togglePanel, update } from './store'
+import { activeTab, activeWorkspace, getStore, run, togglePanel, undoLast, update } from './store'
 import type { PaneSpec, Side } from './types'
 
 export const BINDINGS: Array<[string, string]> = [
@@ -59,6 +59,7 @@ export function handleKey(ev: KeyboardEvent): boolean {
       arm(true)
       return true
     }
+    if (ev.ctrlKey && !ev.shiftKey && !ev.altKey && direct === 'z') return undoLast()
     const focused = activeTab(s)?.focused
     if (ev.ctrlKey && ev.shiftKey && !ev.altKey && (direct === 'o' || direct === 'e') && focused !== undefined) {
       void run({ op: 'splitPane', target: focused, dir: direct === 'o' ? 'right' : 'down', pane: shell })

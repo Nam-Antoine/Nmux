@@ -348,7 +348,7 @@ function Help(): React.JSX.Element {
       <h2>Keyboard</h2>
       <p className="muted">
         Press Ctrl+B, release, then one of these. Everything is also on the mouse. Without Ctrl+B: Ctrl+Shift+O splits
-        right, Ctrl+Shift+E splits down.
+        right, Ctrl+Shift+E splits down, Ctrl+Z undoes the latest file action.
       </p>
       <div className="keys">
         {BINDINGS.map(([key, what]) => (

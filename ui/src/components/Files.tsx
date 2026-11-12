@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { call, onFileDrag, onFileDrop, openPath, pickUploads, revealPath, sure } from '../api'
 import { join, tail, tidy, up } from '../paths'
-import { activeTab, activeWorkspace, getStore, run, toast, useStore } from '../store'
+import { activeTab, activeWorkspace, getStore, run, toast, undoable as offerUndo, useStore } from '../store'
 import { terminals } from '../terminals'
 import type { DirEntry, FilePreview } from '../types'
 import { ContextMenu } from './ContextMenu'
@@ -229,7 +229,7 @@ export function Files(): React.JSX.Element {
   }
 
   const undoable = (message: string, back: () => Promise<unknown>): void =>
-    toast(message, { label: 'Undo', run: () => void during('Undoing…', back()).then((ok) => ok && toast('Undone.')) })
+    offerUndo(message, () => void during('Undoing…', back()).then((ok) => ok && toast('Undone.')))
 
   const discard = async (dir: string, name: string): Promise<unknown> => {
     const aside = join(dir, `.nmux-undone-${Date.now()}-${name}`)

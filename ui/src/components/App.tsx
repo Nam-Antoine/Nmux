@@ -22,6 +22,7 @@ export function App(): React.JSX.Element {
           {toastAction && (
             <button
               className="btn small-btn"
+              title="Ctrl+Z"
               onClick={() => {
                 update({ toast: null, toastAction: null })
                 toastAction.run()

@@ -84,6 +84,26 @@ export function toast(message: string, action: ToastAction | null = null): void 
   toastTimer = window.setTimeout(() => update({ toast: null, toastAction: null }), action ? 12_000 : 5000)
 }
 
+const undos: Array<() => void> = []
+
+export function undoable(message: string, back: () => void): void {
+  const once = (): void => {
+    const at = undos.indexOf(once)
+    if (at < 0) return
+    undos.splice(at, 1)
+    back()
+  }
+  undos.push(once)
+  if (undos.length > 50) undos.shift()
+  toast(message, { label: 'Undo', run: once })
+}
+
+export function undoLast(): boolean {
+  const last = undos[undos.length - 1]
+  last?.()
+  return last !== undefined
+}
+
 export async function run(op: Parameters<typeof call>[0]): Promise<Awaited<ReturnType<typeof call>> | null> {
   try {
     return await call(op)

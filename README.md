@@ -20,7 +20,8 @@ for every agent (needs you, working, done, idle).
   them onto a folder in the tree; if names are taken it lists them and asks
   before replacing them.
   Delete goes to the Recycle Bin on this computer. Every action is followed
-  by a message with an Undo button: new, rename, delete, upload (what an
+  by a message with an Undo button, and `Ctrl+Z` undoes the latest one
+  (outside a terminal or text box): new, rename, delete, upload (what an
   upload replaced comes back too) and download. The workspace folder itself cannot be renamed or
   deleted.
 - Ports panel: ports your panes listen on (open in the browser), and SSH port
