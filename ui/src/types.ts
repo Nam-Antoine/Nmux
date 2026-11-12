@@ -98,6 +98,7 @@ export type Op =
   | { op: 'focusSide'; pane: PaneId; side: Side }
   | { op: 'swapPanes'; a: PaneId; b: PaneId }
   | { op: 'movePane'; pane: PaneId; target: PaneId; side: Side }
+  | { op: 'breakPane'; pane: PaneId }
   | { op: 'setRatio'; tab: TabId; path: number[]; ratio: number }
   | { op: 'resizeSplit'; pane: PaneId; side: Side; delta: number }
   | { op: 'toggleZoom'; pane: PaneId }

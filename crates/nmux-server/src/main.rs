@@ -21,6 +21,7 @@ fn main() -> anyhow::Result<()> {
         .or_else(nmux_server::default_data_dir)
         .ok_or_else(|| anyhow::anyhow!("cannot find a data directory; pass --data-dir"))?;
 
+    launch::offer_tmux();
     let config = Config {
         data_dir,
         env: launch::process_env(),

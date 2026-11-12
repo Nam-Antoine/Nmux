@@ -2,9 +2,12 @@ use std::io::IsTerminal;
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
-use nmux_core::{AgentState, Pane, PaneId, PaneKind, PaneSpec, PaneStatus, State};
+use nmux_core::{AgentState, Created, Pane, PaneId, PaneKind, PaneSpec, PaneStatus, State};
 use nmux_proto::{Op, Reply};
 use nmux_server::client::Client;
+use nmux_server::screen::SCROLLBACK_LINES;
+
+mod tmux;
 
 const HELP: &str = r#"nc - run and talk to the panes in Nmux (this is not netcat)
 
@@ -29,6 +32,17 @@ Talk to programs
   interrupt [t]               press the stop key, report what happened
   wait [t]                    wait until it stops working (--output X: until it
                               prints X, --timeout <seconds>). Use it instead of sleep.
+
+tmux commands
+  tmux's commands work under their own names and flags: new-session,
+  new-window, split-window, kill-pane, select-pane, send-keys, capture-pane,
+  list-panes, display-message, paste-buffer and more (nc list-commands).
+  A session is a workspace and a window is a tab. -t takes an address like
+  n8b, or tmux's session:window.pane, %pane, @window and $session.
+  ls, send, run and wait keep the meaning above: for tmux's, write
+  list-sessions, send-keys.
+  Every pane also has a tmux command that is this same tool, and the TMUX
+  and TMUX_PANE variables, so what is written for tmux drives Nmux.
 
 More
   whoami                      the address of the pane this runs in
@@ -61,16 +75,30 @@ fn pane_state(pane: &Pane) -> String {
 
 fn key_bytes(key: &str) -> String {
     let lower = key.to_lowercase();
-    if let Some(letter) = lower.strip_prefix("ctrl+").filter(|l| l.len() == 1 && l.as_bytes()[0].is_ascii_lowercase()) {
-        return ((letter.as_bytes()[0] - b'a' + 1) as char).to_string();
+    let held = |long: &str, short: &str| lower.strip_prefix(long).or(lower.strip_prefix(short)).map(|rest| &key[key.len() - rest.len()..]);
+    if let Some(letter) = held("ctrl+", "c-").filter(|l| l.len() == 1 && l.as_bytes()[0].is_ascii_alphabetic()) {
+        return ((letter.as_bytes()[0].to_ascii_lowercase() - b'a' + 1) as char).to_string();
+    }
+    if let Some(rest) = held("alt+", "m-").filter(|rest| !rest.is_empty()) {
+        return format!("\x1b{}", key_bytes(rest));
+    }
+    const FUNCTION: [&str; 12] = ["OP", "OQ", "OR", "OS", "[15~", "[17~", "[18~", "[19~", "[20~", "[21~", "[23~", "[24~"];
+    if let Some(n) = lower.strip_prefix('f').and_then(|n| n.parse::<usize>().ok()).filter(|n| (1..=12).contains(n)) {
+        return format!("\x1b{}", FUNCTION[n - 1]);
     }
     match lower.as_str() {
         "enter" | "return" => "\r",
         "esc" | "escape" => "\x1b",
         "tab" => "\t",
-        "shift+tab" => "\x1b[Z",
+        "shift+tab" | "btab" => "\x1b[Z",
         "space" => " ",
-        "backspace" => "\x7f",
+        "backspace" | "bspace" => "\x7f",
+        "home" => "\x1b[H",
+        "end" => "\x1b[F",
+        "pageup" | "pgup" | "ppage" => "\x1b[5~",
+        "pagedown" | "pgdn" | "npage" => "\x1b[6~",
+        "insert" | "ic" => "\x1b[2~",
+        "delete" | "dc" => "\x1b[3~",
         "up" => "\x1b[A",
         "down" => "\x1b[B",
         "right" => "\x1b[C",
@@ -121,6 +149,8 @@ impl Args {
 struct Cli {
     client: Client,
     state: State,
+    data_dir: PathBuf,
+    as_tmux: bool,
 }
 
 impl Cli {
@@ -150,13 +180,31 @@ impl Cli {
         }
     }
 
-    async fn screen(&self, pane: PaneId) -> Result<String, String> {
+    async fn open(&mut self, op: Op) -> Result<Created, String> {
+        let Reply::Created { created } = self.call(op).await? else { return fail("unexpected reply") };
+        self.refresh().await?;
+        Ok(created)
+    }
+
+    async fn rows(&self, pane: PaneId, history: bool) -> Result<(Vec<String>, usize), String> {
         let Reply::Attached { snapshot } = self.call(Op::Attach { pane }).await? else { return fail("unexpected reply") };
-        let mut parser = vt100::Parser::new(snapshot.rows, snapshot.cols, 0);
+        let mut parser = vt100::Parser::new(snapshot.rows, snapshot.cols, if history { SCROLLBACK_LINES } else { 0 });
         parser.process(snapshot.data.as_bytes());
+        parser.screen_mut().set_scrollback(usize::MAX);
+        let above = parser.screen().scrollback();
         let mut lines: Vec<String> = Vec::new();
-        for row in parser.screen().rows(0, snapshot.cols) {
-            let line = row.trim_end().to_string();
+        for back in (1..=above).rev() {
+            parser.screen_mut().set_scrollback(back);
+            lines.extend(parser.screen().rows(0, snapshot.cols).next());
+        }
+        parser.screen_mut().set_scrollback(0);
+        lines.extend(parser.screen().rows(0, snapshot.cols));
+        Ok((lines.iter().map(|line| line.trim_end().to_string()).collect(), above))
+    }
+
+    async fn screen(&self, pane: PaneId) -> Result<String, String> {
+        let mut lines: Vec<String> = Vec::new();
+        for line in self.rows(pane, false).await?.0 {
             if !(line.is_empty() && lines.last().is_none_or(|l| l.is_empty())) {
                 lines.push(line);
             }
@@ -256,6 +304,22 @@ impl Cli {
         }
     }
 
+    async fn type_when_ready(&mut self, pane: PaneId, kind: PaneKind, line: String) -> Result<(), String> {
+        if line.trim().is_empty() {
+            return Ok(());
+        }
+        let ready = Instant::now();
+        while kind == PaneKind::Claude && ready.elapsed() < Duration::from_secs(40) {
+            tokio::time::sleep(Duration::from_millis(500)).await;
+            self.refresh().await?;
+            if self.pane(pane)?.agent == AgentState::Idle {
+                break;
+            }
+        }
+        tokio::time::sleep(Duration::from_millis(if kind == PaneKind::Claude { 300 } else { 1200 })).await;
+        self.paste(pane, line, true).await
+    }
+
     async fn run(&mut self, args: &Args) -> Result<(), String> {
         let home = match args.value("--in") {
             Some(address) => self.state.resolve(address)?,
@@ -269,22 +333,9 @@ impl Cli {
             "shell" => (PaneKind::Shell, rest),
             _ => (PaneKind::Shell, args.words.join(" ")),
         };
-        self.call(Op::CreateTab { workspace, name: None, pane: PaneSpec::new(kind) }).await?;
-        self.refresh().await?;
-        let pane = self.state.workspaces.iter().find(|w| w.id == workspace).and_then(|w| w.focused_pane()).ok_or("the tab did not open")?;
+        let pane = self.open(Op::CreateTab { workspace, name: None, pane: PaneSpec::new(kind) }).await?.pane;
         let address = self.state.address(pane).unwrap_or_default();
-        if !line.trim().is_empty() {
-            let ready = Instant::now();
-            while kind == PaneKind::Claude && ready.elapsed() < Duration::from_secs(40) {
-                tokio::time::sleep(Duration::from_millis(500)).await;
-                self.refresh().await?;
-                if self.pane(pane)?.agent == AgentState::Idle {
-                    break;
-                }
-            }
-            tokio::time::sleep(Duration::from_millis(if kind == PaneKind::Claude { 300 } else { 1200 })).await;
-            self.paste(pane, line, true).await?;
-        }
+        self.type_when_ready(pane, kind, line).await?;
         if args.has("--bg") || kind == PaneKind::Shell {
             println!("{address}");
             return Ok(());
@@ -295,7 +346,31 @@ impl Cli {
     }
 }
 
+const TMUX_FLAGS_WITH_VALUE: [&str; 5] = ["-c", "-f", "-L", "-S", "-T"];
+
+fn as_tmux(raw: &mut Vec<String>) -> bool {
+    let called = std::env::args().next().map(PathBuf::from);
+    if !called.and_then(|exe| Some(exe.file_stem()?.to_string_lossy().eq_ignore_ascii_case("tmux"))).unwrap_or(false) {
+        return false;
+    }
+    while raw.first().is_some_and(|a| a.starts_with('-') && a != "-V" && a != "-h") {
+        let flag = raw.remove(0);
+        if TMUX_FLAGS_WITH_VALUE.contains(&flag.as_str()) && !raw.is_empty() {
+            raw.remove(0);
+        }
+    }
+    if raw.is_empty() {
+        raw.push("new-session".into());
+    }
+    true
+}
+
 async fn run(mut raw: Vec<String>) -> Result<(), String> {
+    let as_tmux = as_tmux(&mut raw);
+    if as_tmux && raw[0] == "-V" {
+        println!("tmux 3.4");
+        return Ok(());
+    }
     let data_dir = match raw.iter().position(|a| a == "--data-dir") {
         Some(i) if i + 1 < raw.len() => {
             let dir = PathBuf::from(raw.remove(i + 1));
@@ -323,7 +398,10 @@ async fn run(mut raw: Vec<String>) -> Result<(), String> {
         return Ok(());
     }
     let Reply::State { state } = client.call(Op::GetState).await? else { return fail("unexpected reply") };
-    let mut cli = Cli { client, state };
+    let mut cli = Cli { client, state, data_dir, as_tmux };
+    if as_tmux {
+        return tmux::run(&mut cli, &command, rest).await;
+    }
     let args = Args::parse(rest);
     let first = args.words.first();
 
@@ -341,10 +419,6 @@ async fn run(mut raw: Vec<String>) -> Result<(), String> {
                 let p = cli.pane(pane)?;
                 println!("{}  {:?}  {}  {}  {}", cli.state.address(pane).unwrap_or_default(), p.shown_kind(), pane_state(p), p.name, p.cwd);
             }
-        }
-        "attach" => {
-            let pane = cli.named_or_me(first)?;
-            cli.call(Op::FocusPane { pane }).await?;
         }
         "read" => {
             let pane = cli.named_or_me(first)?;
@@ -387,7 +461,7 @@ async fn run(mut raw: Vec<String>) -> Result<(), String> {
             println!("{}", cli.wait(pane, &args).await?);
         }
         "run" => cli.run(&args).await?,
-        other => return fail(format!("unknown command \"{other}\"; run: nc --help")),
+        other => tmux::run(&mut cli, other, rest).await?,
     }
     Ok(())
 }

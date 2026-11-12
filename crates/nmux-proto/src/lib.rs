@@ -52,6 +52,7 @@ pub enum Op {
     FocusSide { pane: PaneId, side: Side },
     SwapPanes { a: PaneId, b: PaneId },
     MovePane { pane: PaneId, target: PaneId, side: Side },
+    BreakPane { pane: PaneId },
     SetRatio { tab: TabId, path: Vec<u8>, ratio: f32 },
     ResizeSplit { pane: PaneId, side: Side, delta: f32 },
     ToggleZoom { pane: PaneId },

@@ -73,12 +73,29 @@ pub fn screen_is_blocked(screen: &str) -> bool {
     (form && !picker) || permission
 }
 
+const NEAR_PROMPT: usize = 14;
+
+fn last_lines(screen: &str) -> Vec<&str> {
+    let lines: Vec<&str> = screen.lines().filter(|l| !l.trim().is_empty()).collect();
+    lines[lines.len().saturating_sub(NEAR_PROMPT)..].to_vec()
+}
+
+pub fn screen_is_working(screen: &str) -> bool {
+    last_lines(screen).iter().any(|line| {
+        let mut chars = line.chars();
+        let spinner = chars.next().is_some_and(|c| "·✢✳✶✻✽*".contains(c)) && chars.next() == Some(' ');
+        spinner && chars.as_str().split(" (").next().is_some_and(|doing| doing.trim_end().ends_with('…'))
+    })
+}
+
 pub fn classify(title: Option<&str>, screen: &str) -> Option<Detected> {
     if screen_is_blocked(screen) {
         return Some(Detected::Blocked);
     }
-    let title = title?;
-    Some(if title_is_working(title) { Detected::Working } else { Detected::Idle })
+    if title.is_some_and(title_is_working) || screen_is_working(screen) {
+        return Some(Detected::Working);
+    }
+    (title.is_some() || last_lines(screen).iter().any(|line| line.starts_with('❯'))).then_some(Detected::Idle)
 }
 
 #[cfg(test)]
@@ -146,7 +163,22 @@ mod tests {
         let screen = "● Done.\n\n❯ \n  ? for shortcuts";
         assert_eq!(classify(Some("✳ t"), screen), Some(Detected::Idle));
         assert_eq!(classify(Some("◒ t"), screen), Some(Detected::Working));
-        assert_eq!(classify(None, screen), None);
+        assert_eq!(classify(None, screen), Some(Detected::Idle));
+    }
+
+    #[test]
+    fn without_a_title_the_screen_says_whether_it_works() {
+        let prompt = "────\n❯ \n────\n  ⏵⏵ auto mode on";
+        for doing in ["· Ionizing…", "✻ Ionizing… (12s · ↓ 598 tokens)", "✶ Fixing the login bug… (3s)"] {
+            assert_eq!(classify(None, &format!("● Bash(sleep 6)\n  ⎿  Running…\n\n{doing}\n  ⎿  Tip: x\n{prompt}")), Some(Detected::Working), "{doing}");
+            assert_eq!(classify(Some("shell"), &format!("{doing}\n{prompt}")), Some(Detected::Working), "a stale title");
+        }
+        for done in ["✻ Baked for 5s · done 2:32 PM", "  · a list item…", "● Thinking about it…"] {
+            assert_eq!(classify(None, &format!("{done}\n{prompt}")), Some(Detected::Idle), "{done}");
+        }
+        assert_eq!(classify(None, "starting"), None);
+        let old = format!("· Ionizing…\n{}{prompt}", "● line\n".repeat(20));
+        assert_eq!(classify(None, &old), Some(Detected::Idle), "a spinner far above the prompt is old output");
     }
 
     #[test]

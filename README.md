@@ -63,6 +63,17 @@ nc run --bg claude "review src/x.rs"
 nc --help
 ```
 
+tmux's commands work in `nc` under their own names and flags: `new-session`,
+`new-window`, `split-window`, `kill-pane`, `select-pane`, `send-keys`,
+`capture-pane`, `list-panes`, `display-message`, `paste-buffer` and the rest
+of `nc list-commands`. A session is a workspace and a window is a tab; `-t`
+takes an address like `n8b` or tmux's `session:window.pane`, `%pane`,
+`@window` and `$session`. Every pane also has a `tmux` command that is this
+same tool, and the `TMUX` and `TMUX_PANE` variables, so scripts and tools
+written for tmux open and drive panes in Nmux. Commands about tmux's own
+keys, options, layouts and copy mode have nothing to map to: `nc` refuses
+them, and `tmux` ignores the ones that only change settings.
+
 A message sent from one pane to an agent starts with who sent it and how to
 reply, so agents in different workspaces can ask each other questions. `nc` is
 on the PATH of every pane.

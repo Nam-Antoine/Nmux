@@ -129,6 +129,8 @@ pub fn pane_env(base: &Env, pane: PaneId) -> Env {
     env.insert("COLORTERM".into(), "truecolor".into());
     env.insert("TERM_PROGRAM".into(), "nmux".into());
     env.insert("NMUX_PANE_ID".into(), pane.0.to_string());
+    env.insert("TMUX".into(), format!("nmux,{},0", std::process::id()));
+    env.insert("TMUX_PANE".into(), format!("%{}", pane.0));
     if let Some(dir) = std::env::current_exe().ok().and_then(|exe| Some(exe.parent()?.to_string_lossy().into_owned())) {
         let key = env.keys().find(|k| k.eq_ignore_ascii_case("PATH")).cloned().unwrap_or_else(|| "PATH".into());
         let sep = if cfg!(windows) { ';' } else { ':' };
@@ -138,6 +140,17 @@ pub fn pane_env(base: &Env, pane: PaneId) -> Env {
         }
     }
     env
+}
+
+pub fn offer_tmux() {
+    let Some(dir) = std::env::current_exe().ok().and_then(|exe| Some(exe.parent()?.to_path_buf())) else { return };
+    let ext = std::env::consts::EXE_SUFFIX;
+    let (nc, tmux) = (dir.join(format!("nc{ext}")), dir.join(format!("tmux{ext}")));
+    let stamp = |path: &Path| path.metadata().ok().and_then(|m| Some((m.len(), m.modified().ok()?)));
+    let fresh = matches!((stamp(&nc), stamp(&tmux)), (Some(nc), Some(tmux)) if nc.0 == tmux.0 && nc.1 <= tmux.1);
+    if !fresh {
+        let _ = std::fs::copy(&nc, &tmux);
+    }
 }
 
 pub fn process_env() -> Env {
@@ -199,6 +212,7 @@ mod tests {
         assert!(!env.contains_key("ELECTRON_RUN_AS_NODE"));
         assert_eq!(env["ANTHROPIC_API_KEY"], "k");
         assert_eq!(env["NMUX_PANE_ID"], "5");
+        assert_eq!(env["TMUX_PANE"], "%5");
         assert_eq!(env["TERM"], "xterm-256color");
     }
 }

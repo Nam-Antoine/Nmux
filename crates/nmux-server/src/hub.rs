@@ -465,6 +465,7 @@ impl Hub {
             }
             Op::SwapPanes { a, b } => self.done(inner, |s| s.swap_panes(a, b)),
             Op::MovePane { pane, target, side } => self.done(inner, |s| s.move_pane(pane, target, side)),
+            Op::BreakPane { pane } => self.done(inner, |s| s.break_pane(pane)),
             Op::SetRatio { tab, path, ratio } => self.done(inner, |s| s.set_ratio(tab, &path, ratio)),
             Op::ResizeSplit { pane, side, delta } => {
                 if !delta.is_finite() {

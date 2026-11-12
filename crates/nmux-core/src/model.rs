@@ -427,6 +427,11 @@ impl State {
         let (wi, ti) = self.locate(pane).ok_or(ModelError::NoPane)?;
         self.panes.remove(&pane);
         let mut closed = Closed { panes: vec![pane], ..Closed::default() };
+        self.leave(wi, ti, pane, &mut closed);
+        Ok(closed)
+    }
+
+    fn leave(&mut self, wi: usize, ti: usize, pane: PaneId, closed: &mut Closed) {
         let tab = &mut self.workspaces[wi].tabs[ti];
         match tab.layout.clone().remove(pane) {
             Some(rest) => {
@@ -438,10 +443,9 @@ impl State {
             }
             None => {
                 closed.tab = Some(tab.id);
-                self.drop_tab(wi, ti, &mut closed);
+                self.drop_tab(wi, ti, closed);
             }
         }
-        Ok(closed)
     }
 
     pub fn close_tab(&mut self, tab: TabId) -> Res<Closed> {
@@ -527,12 +531,32 @@ impl State {
     }
 
     pub fn move_pane(&mut self, pane: PaneId, target: PaneId, side: Side) -> Res<()> {
-        let tab = self.tab_of_mut(pane)?;
-        if tab.layout.move_beside(pane, target, side) {
+        let (wi, ti) = self.locate(pane).ok_or(ModelError::NoPane)?;
+        let (wj, tj) = self.locate(target).ok_or(ModelError::NoPane)?;
+        if wi != wj {
+            return Err(ModelError::Invalid("panes are not in the same workspace"));
+        }
+        if ti != tj {
+            self.workspaces[wj].tabs[tj].layout.insert(target, side, pane);
+            self.leave(wi, ti, pane, &mut Closed::default());
+            return self.focus_pane(pane);
+        }
+        if self.workspaces[wi].tabs[ti].layout.move_beside(pane, target, side) {
             Ok(())
         } else {
-            Err(ModelError::Invalid("panes are not in the same tab"))
+            Err(ModelError::Invalid("that pane cannot move there"))
         }
+    }
+
+    pub fn break_pane(&mut self, pane: PaneId) -> Res<()> {
+        let (wi, ti) = self.locate(pane).ok_or(ModelError::NoPane)?;
+        if self.workspaces[wi].tabs[ti].layout.panes().len() < 2 {
+            return Err(ModelError::Invalid("it is the only pane in its tab"));
+        }
+        self.leave(wi, ti, pane, &mut Closed::default());
+        let tab = TabId(self.fresh_id());
+        self.workspaces[wi].tabs.push(Tab { id: tab, name: None, layout: Node::leaf(pane), focused: pane, zoomed: false });
+        self.focus_pane(pane)
     }
 
     pub fn set_ratio(&mut self, tab: TabId, path: &[u8], ratio: f32) -> Res<()> {
@@ -885,6 +909,25 @@ mod tests {
         }
         s.sanitize_after_load();
         assert_eq!(s.workspaces.iter().map(|w| w.number).collect::<Vec<_>>(), vec![1, 2]);
+    }
+
+    #[test]
+    fn a_pane_moves_to_another_tab_or_a_tab_of_its_own() {
+        let (mut s, first) = state();
+        let split = s.split_pane(first.pane, Dir::Right, claude(), 2).unwrap();
+        let other = s.create_tab(first.workspace, None, claude(), 3).unwrap();
+        assert!(s.break_pane(other.pane).is_err());
+        s.move_pane(other.pane, first.pane, Side::Left).unwrap();
+        assert_eq!(s.workspaces[0].tabs.len(), 1, "the emptied tab is gone");
+        assert_eq!(s.workspaces[0].tabs[0].layout.panes(), [other.pane, first.pane, split.pane]);
+        assert_eq!(s.workspaces[0].focused_pane(), Some(other.pane));
+        s.break_pane(split.pane).unwrap();
+        assert_eq!(s.workspaces[0].tabs[0].layout.panes(), [other.pane, first.pane]);
+        assert_eq!(s.workspaces[0].tabs[1].layout.panes(), [split.pane]);
+        assert_eq!(s.workspaces[0].focused_pane(), Some(split.pane));
+        let far = s.create_workspace(None, "/work/far".into(), claude(), 4);
+        assert!(s.move_pane(far.pane, first.pane, Side::Right).is_err());
+        assert_eq!(s.panes.len(), 4);
     }
 
     #[test]

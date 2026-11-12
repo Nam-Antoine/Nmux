@@ -83,7 +83,7 @@ impl Node {
         self.insert(target, if dir == Dir::Right { Side::Right } else { Side::Down }, new)
     }
 
-    fn insert(&mut self, target: PaneId, side: Side, new: PaneId) -> bool {
+    pub fn insert(&mut self, target: PaneId, side: Side, new: PaneId) -> bool {
         match self {
             Node::Leaf { pane } if *pane == target => {
                 let dir = if matches!(side, Side::Left | Side::Right) { Dir::Right } else { Dir::Down };
