@@ -40,6 +40,32 @@
 .tree-row.active {
   background: var(--active);
 }
+.tree-row:focus-visible {
+  outline: 1px solid var(--accent);
+  outline-offset: -1px;
+}
+.tree.drop,
+.tree-row.drop {
+  outline: 1px dashed var(--accent);
+  outline-offset: -1px;
+  background: rgba(122, 167, 255, 0.08);
+}
+.files {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+.tree-row .inline-edit {
+  font-size: 12.5px;
+}
+.tree-note.busy {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--fg-2);
+  overflow-wrap: anywhere;
+}
 .tree-row svg {
   width: 13px;
   height: 13px;

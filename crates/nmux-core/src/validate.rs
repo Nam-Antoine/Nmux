@@ -49,7 +49,10 @@ pub fn cwd(raw: &str) -> Result<String, Rejected> {
 }
 
 pub fn remote_cwd(raw: &str) -> Result<String, Rejected> {
-    let p = raw.trim();
+    remote_path(raw.trim())
+}
+
+pub fn remote_path(p: &str) -> Result<String, Rejected> {
     if p.is_empty() || p.len() > MAX_PATH {
         return reject("folder path is empty or too long");
     }
@@ -170,6 +173,16 @@ mod tests {
         assert!(cwd("relative\\path").is_err());
         assert!(cwd("C:relative").is_err());
         assert!(cwd("").is_err());
+    }
+
+    #[test]
+    fn remote_file_paths_are_kept_byte_for_byte() {
+        assert_eq!(remote_cwd(" ~/proj ").unwrap(), "~/proj");
+        assert_eq!(remote_path("/srv/report ").unwrap(), "/srv/report ");
+        assert_eq!(remote_path("~/a b/ ").unwrap(), "~/a b/ ");
+        for bad in ["", " /srv", " ~", "relative", "/srv/a\nb", "~x"] {
+            assert!(remote_path(bad).is_err(), "{bad:?}");
+        }
     }
 
     #[test]

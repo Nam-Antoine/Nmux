@@ -145,6 +145,12 @@ fn may_wait(op: &Op) -> bool {
             | Op::ListSshHosts
             | Op::ListDir { .. }
             | Op::ReadFile { .. }
+            | Op::MakeDir { .. }
+            | Op::MakeFile { .. }
+            | Op::RenamePath { .. }
+            | Op::RemovePath { .. }
+            | Op::UploadPaths { .. }
+            | Op::DownloadPath { .. }
             | Op::CheckPath { .. }
             | Op::PasteImage { .. }
             | Op::StartForward { .. }

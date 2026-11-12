@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import { sure } from '../api'
 import { rollup, run, update, useStore, workspacePanes } from '../store'
 import type { AgentState, Machine, Pane, Workspace } from '../types'
 import { Avatar, Chevron, Clock, Close, FilesIcon, Keyboard, Pencil, PortsIcon, KindIcon, Monitor, Play, Plus, Search, ServerIcon, SidebarIcon, shownKind, StateDot } from './icons'
@@ -29,7 +30,7 @@ function WorkspaceRow({ ws, active }: { ws: Workspace; active: boolean }): React
 
   const close = (): void => {
     const warn = running > 0 ? `Close "${ws.name}"? This stops ${running} running pane${running > 1 ? 's' : ''}.` : `Close "${ws.name}"?`
-    if (window.confirm(warn)) void run({ op: 'closeWorkspace', workspace: ws.id })
+    void sure(warn).then((yes) => (yes ? run({ op: 'closeWorkspace', workspace: ws.id }) : null))
   }
 
   return (
@@ -125,7 +126,7 @@ function MachineGroup({ machine, spaces, activeId, running }: { machine?: Machin
   const remove = (): void => {
     if (!machine) return
     if (spaces.length > 0) return void window.alert(`Close the workspaces on "${machine.label}" first.`)
-    if (window.confirm(`Remove "${machine.label}"? Nothing is stopped on the machine.`)) void run({ op: 'removeMachine', machine: machine.id })
+    void sure(`Remove "${machine.label}"? Nothing is stopped on the machine.`).then((yes) => (yes ? run({ op: 'removeMachine', machine: machine.id }) : null))
   }
 
   return (

@@ -78,6 +78,35 @@ pub enum Op {
         #[serde(default)]
         machine: Option<MachineId>,
     },
+    MakeDir {
+        path: String,
+        #[serde(default)]
+        machine: Option<MachineId>,
+    },
+    MakeFile {
+        path: String,
+        #[serde(default)]
+        machine: Option<MachineId>,
+    },
+    RenamePath {
+        from: String,
+        to: String,
+        #[serde(default)]
+        machine: Option<MachineId>,
+    },
+    RemovePath {
+        path: String,
+        #[serde(default)]
+        machine: Option<MachineId>,
+    },
+    UploadPaths {
+        sources: Vec<String>,
+        to: String,
+        overwrite: bool,
+        #[serde(default)]
+        machine: Option<MachineId>,
+    },
+    DownloadPath { path: String, machine: MachineId },
     CheckPath { path: String },
     PasteImage { pane: PaneId, extension: String, data: String },
 
@@ -286,6 +315,23 @@ mod tests {
         let json = serde_json::to_value(&req).unwrap();
         assert_eq!(json, serde_json::json!({"id": 7, "op": "resize", "pane": 3, "cols": 120, "rows": 40}));
         assert_eq!(serde_json::from_value::<Request>(json).unwrap(), req);
+    }
+
+    #[test]
+    fn file_ops_default_to_this_computer() {
+        let op = |json: serde_json::Value| serde_json::from_value::<Op>(json).unwrap();
+        assert_eq!(op(serde_json::json!({"op": "makeDir", "path": "/w/a"})), Op::MakeDir { path: "/w/a".into(), machine: None });
+        assert_eq!(
+            op(serde_json::json!({"op": "renamePath", "from": "/w/a", "to": "/w/b", "machine": 2})),
+            Op::RenamePath { from: "/w/a".into(), to: "/w/b".into(), machine: Some(MachineId(2)) }
+        );
+        assert_eq!(
+            op(serde_json::json!({"op": "uploadPaths", "sources": ["C:/a.txt"], "to": "~/w", "overwrite": false})),
+            Op::UploadPaths { sources: vec!["C:/a.txt".into()], to: "~/w".into(), overwrite: false, machine: None }
+        );
+        assert!(serde_json::from_value::<Op>(serde_json::json!({"op": "downloadPath", "path": "/w/a"})).is_err());
+        let reply = serde_json::to_value(Reply::Path { path: "C:/dl/a".into() }).unwrap();
+        assert_eq!(reply, serde_json::json!({"kind": "path", "path": "C:/dl/a"}));
     }
 
     #[test]

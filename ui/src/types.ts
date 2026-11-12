@@ -112,6 +112,12 @@ export type Op =
   | { op: 'setWindowVisible'; visible: boolean }
   | { op: 'listDir'; path: string; machine?: MachineId }
   | { op: 'readFile'; path: string; machine?: MachineId }
+  | { op: 'makeDir'; path: string; machine?: MachineId }
+  | { op: 'makeFile'; path: string; machine?: MachineId }
+  | { op: 'renamePath'; from: string; to: string; machine?: MachineId }
+  | { op: 'removePath'; path: string; machine?: MachineId }
+  | { op: 'uploadPaths'; sources: string[]; to: string; overwrite: boolean; machine?: MachineId }
+  | { op: 'downloadPath'; path: string; machine: MachineId }
   | { op: 'pasteImage'; pane: PaneId; extension: string; data: string }
   | { op: 'listPorts' }
   | { op: 'listMachinePorts'; machine: MachineId }

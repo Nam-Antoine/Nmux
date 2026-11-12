@@ -1,9 +1,11 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { call, pickFolder } from '../api'
 import { BINDINGS } from '../keys'
+import { join, tidy, up } from '../paths'
 import { run, update, useStore } from '../store'
 import type { DirEntry, Machine, PaneKind, PaneSpec, SshHost } from '../types'
 import { Check, FolderIcon, KIND_LABEL, KindIcon, ServerIcon, Up } from './icons'
+import { PathInput } from './PathInput'
 
 const KINDS: PaneKind[] = ['claude', 'shell', 'cloud']
 
@@ -12,9 +14,12 @@ function MachineFolder({ machine, cwd, setCwd }: { machine: Machine; cwd: string
   const [shown, setShown] = useState('')
   const [folders, setFolders] = useState<DirEntry[] | null>(null)
   const [problem, setProblem] = useState<string | null>(null)
+  const latest = useRef(cwd)
+  latest.current = cwd
 
   useEffect(() => {
     let gone = false
+    const held = latest.current
     setFolders(null)
     setProblem(null)
     call({ op: 'listDir', path: place, machine: machine.id })
@@ -22,7 +27,7 @@ function MachineFolder({ machine, cwd, setCwd }: { machine: Machine; cwd: string
         if (gone || reply.kind !== 'dir') return
         setFolders(reply.entries.filter((e) => e.dir))
         setShown(reply.path)
-        setCwd(reply.path)
+        if (latest.current === held) setCwd(reply.path)
       })
       .catch((err) => !gone && setProblem(String(err)))
     return () => {
@@ -30,42 +35,44 @@ function MachineFolder({ machine, cwd, setCwd }: { machine: Machine; cwd: string
     }
   }, [place, machine.id, setCwd])
 
-  const typed = cwd.trim() !== shown
-  const go = (): void => {
-    if (typed) setPlace(cwd.trim() || '~')
+  const typed = tidy(cwd) !== shown
+  const go = (path: string): void => {
+    if (tidy(path) !== shown) setPlace(tidy(path) || '~')
   }
   return (
     <div className="field">
       <span>Folder on {machine.label}</span>
-      <div className="row">
+      <div
+        className="row"
+        onBlur={() => go(cwd)}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter' && typed && e.target instanceof HTMLInputElement) e.preventDefault()
+        }}
+      >
         <button
           type="button"
           className="btn"
           title="Up one folder"
           disabled={shown === '' || shown === '/'}
-          onClick={() => setPlace(shown.replace(/\/[^/]+\/*$/, '') || '/')}
+          onMouseDown={(e) => e.preventDefault()}
+          onClick={() => setPlace(up(shown))}
         >
           <Up />
         </button>
-        <input
-          value={cwd}
-          onChange={(e) => setCwd(e.target.value)}
-          onBlur={go}
-          onKeyDown={(e) => {
-            if (e.key !== 'Enter' || !typed) return
-            e.preventDefault()
-            go()
-          }}
-          placeholder="~/project or /srv/app"
-          spellCheck={false}
-        />
+        <PathInput machine={machine.id} value={cwd} onChange={setCwd} onGo={go} placeholder="~/project or /srv/app" />
       </div>
       <div className="folder-list">
         {problem && <div className="tree-note">Could not look on {machine.label}: {problem}</div>}
         {!problem && folders === null && <div className="tree-note">Looking on {machine.label}…</div>}
         {folders?.length === 0 && <div className="tree-note">No folders in here.</div>}
         {folders?.map((f) => (
-          <div key={f.name} className="tree-row" title={`Open ${f.name}`} onClick={() => setPlace(`${shown.replace(/\/+$/, '')}/${f.name}`)}>
+          <div
+            key={f.name}
+            className="tree-row"
+            title={`Open ${f.name}`}
+            onMouseDown={(e) => e.preventDefault()}
+            onClick={() => setPlace(join(shown, f.name))}
+          >
             <FolderIcon />
             <span className="tree-name dir">{f.name}</span>
           </div>

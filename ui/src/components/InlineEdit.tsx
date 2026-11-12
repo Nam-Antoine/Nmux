@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 
-export function InlineEdit({ value, onDone }: { value: string; onDone: (value: string | null) => void }): React.JSX.Element {
+export function InlineEdit({ value, maxLength = 80, onDone }: { value: string; maxLength?: number; onDone: (value: string | null) => void }): React.JSX.Element {
   const [text, setText] = useState(value)
   const ref = useRef<HTMLInputElement>(null)
   useEffect(() => {
@@ -12,7 +12,7 @@ export function InlineEdit({ value, onDone }: { value: string; onDone: (value: s
       ref={ref}
       className="inline-edit"
       value={text}
-      maxLength={80}
+      maxLength={maxLength}
       onChange={(e) => setText(e.target.value)}
       onClick={(e) => e.stopPropagation()}
       onDoubleClick={(e) => e.stopPropagation()}

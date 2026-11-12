@@ -626,6 +626,16 @@ impl State {
         true
     }
 
+    pub fn set_claude_session(&mut self, pane: PaneId, session: String) -> bool {
+        match self.panes.get_mut(&pane) {
+            Some(p) if p.kind == PaneKind::Claude && p.status == PaneStatus::Running && p.claude_session_id.as_deref() != Some(&session) => {
+                p.claude_session_id = Some(session);
+                true
+            }
+            _ => false,
+        }
+    }
+
     pub fn set_runs_claude(&mut self, pane: PaneId, found: Option<ShellClaude>) -> bool {
         let Some(p) = self.panes.get_mut(&pane).filter(|p| p.kind == PaneKind::Shell && p.status == PaneStatus::Running) else {
             return false;
@@ -971,6 +981,16 @@ mod tests {
     }
 
     #[test]
+    fn a_claude_pane_follows_the_conversation_it_moved_to() {
+        let mut s = State::default();
+        let c = s.create_workspace(None, "/w".into(), claude(), 1);
+        assert!(s.set_claude_session(c.pane, "after-clear".into()) && !s.set_claude_session(c.pane, "after-clear".into()));
+        assert_eq!(s.panes[&c.pane].claude_session_id.as_deref(), Some("after-clear"));
+        s.set_exited(c.pane, None);
+        assert!(!s.set_claude_session(c.pane, "late".into()));
+    }
+
+    #[test]
     fn shells_never_get_an_agent_state() {
         let mut s = State::default();
         let c = s.create_workspace(None, "/w".into(), PaneSpec::new(PaneKind::Shell), 1);
@@ -985,6 +1005,7 @@ mod tests {
         let p = &s.panes[&c.pane];
         assert_eq!((p.shown_kind(), p.agent, &p.claude_session_id, p.skip_permissions), (PaneKind::Shell, AgentState::Unknown, &None, false));
 
+        assert!(!s.set_claude_session(c.pane, "new".into()), "only a claude pane follows its conversation");
         s.set_runs_claude(c.pane, found());
         s.set_runs_claude(c.pane, Some(ShellClaude::default()));
         s.set_exited(c.pane, None);

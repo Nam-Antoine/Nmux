@@ -25,6 +25,8 @@ vt100 = "0.16"
 uuid = { version = "1", features = ["v4"] }
 getrandom = "0.3"
 base64 = "0.22"
+trash = "5"
+tar = { version = "0.4", default-features = false }
 sysinfo = { version = "0.33", default-features = false, features = ["system"] }
 
 [dev-dependencies]

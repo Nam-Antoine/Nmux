@@ -1,5 +1,5 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react'
-import { appWindow, openCloudUrl } from '../api'
+import { appWindow, openCloudUrl, sure } from '../api'
 import { activeTab, activeWorkspace, leaves, paneAddress, rollup, run, tabLabel, togglePanel, update, useStore } from '../store'
 import { terminals } from '../terminals'
 import type { LayoutNode, Pane, PaneId, Side, Tab, Workspace } from '../types'
@@ -60,9 +60,8 @@ function TabBar({ ws, current }: { ws: Workspace; current: Tab }): React.JSX.Ele
 
   const closeTab = (tab: Tab): void => {
     const running = leaves(tab.layout).filter((id) => s.panes.get(id)?.status === 'running').length
-    if (running === 0 || window.confirm(`Close this tab? This stops ${running} running pane${running > 1 ? 's' : ''}.`)) {
-      void run({ op: 'closeTab', tab: tab.id })
-    }
+    const asked = running === 0 || sure(`Close this tab? This stops ${running} running pane${running > 1 ? 's' : ''}.`)
+    void Promise.resolve(asked).then((yes) => (yes ? run({ op: 'closeTab', tab: tab.id }) : null))
   }
   const add = (pane: Parameters<typeof run>[0] & { op: 'createTab' }): void => {
     setMenu(false)
@@ -309,9 +308,8 @@ function PaneView({ id, focused, solo }: { id: PaneId; focused: boolean; solo: b
 
   if (!pane) return null
   const close = (): void => {
-    if (pane.status !== 'running' || window.confirm(`Close "${pane.name}"? This stops it.`)) {
-      void run({ op: 'closePane', pane: id })
-    }
+    const asked = pane.status !== 'running' || sure(`Close "${pane.name}"? This stops it.`)
+    void Promise.resolve(asked).then((yes) => (yes ? run({ op: 'closePane', pane: id }) : null))
   }
   const split = (dir: 'right' | 'down'): void => void run({ op: 'splitPane', target: id, dir, pane: { kind: 'shell' } })
   const zoom = (): void => void run({ op: 'toggleZoom', pane: id })

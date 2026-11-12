@@ -2,7 +2,7 @@ import { invoke } from '@tauri-apps/api/core'
 import { listen } from '@tauri-apps/api/event'
 import { getCurrentWebview } from '@tauri-apps/api/webview'
 import { getCurrentWindow } from '@tauri-apps/api/window'
-import { open } from '@tauri-apps/plugin-dialog'
+import { confirm, open } from '@tauri-apps/plugin-dialog'
 import { isPermissionGranted, requestPermission, sendNotification } from '@tauri-apps/plugin-notification'
 import type { Op, Reply, ServerEvent } from './types'
 
@@ -29,6 +29,15 @@ export function onDisconnected(handler: (why: string) => void): Promise<() => vo
 export async function pickFolder(): Promise<string | null> {
   const picked = await open({ directory: true, multiple: false, title: 'Choose a project folder' })
   return typeof picked === 'string' ? picked : null
+}
+
+export function sure(question: string): Promise<boolean> {
+  return confirm(question, { title: 'Nmux', kind: 'warning' }).catch(() => false)
+}
+
+export async function pickUploads(folders: boolean): Promise<string[]> {
+  const picked = await open({ directory: folders, multiple: true, title: folders ? 'Choose folders to upload' : 'Choose files to upload' })
+  return typeof picked === 'string' ? [picked] : (picked ?? [])
 }
 
 export function openCloudUrl(url: string): void {
@@ -62,6 +71,14 @@ export function onFileDrop(handler: (paths: string[], x: number, y: number) => v
     if (event.payload.type !== 'drop') return
     const { paths, position } = event.payload
     handler(paths, position.x / window.devicePixelRatio, position.y / window.devicePixelRatio)
+  })
+}
+
+export function onFileDrag(handler: (at: { x: number; y: number } | null) => void): Promise<() => void> {
+  return getCurrentWebview().onDragDropEvent((event) => {
+    if (event.payload.type !== 'enter' && event.payload.type !== 'over') return handler(null)
+    const { position } = event.payload
+    handler({ x: position.x / window.devicePixelRatio, y: position.y / window.devicePixelRatio })
   })
 }
 

@@ -14,7 +14,13 @@ for every agent (needs you, working, done, idle).
 - Cloud tasks: `claude --cloud "<task>"` from a workspace, then "Teleport" to
   bring the cloud session into a local pane.
 - Files panel: the workspace folder as a tree, with preview, open, reveal and
-  "type this path into the pane".
+  "type this path into the pane". Right-click a row (or the empty space) for
+  new file, new folder, rename, delete, copy path and upload; `F2` renames and
+  `Delete` deletes the focused row. Upload picks files or folders, or drop
+  them onto a folder in the tree; if names are taken it lists them and asks
+  before going on (folders are merged, same-named files replaced).
+  Delete goes to the Recycle Bin on this computer. The workspace folder itself
+  cannot be renamed or deleted.
 - Ports panel: ports your panes listen on (open in the browser), and SSH port
   forwards (`ssh -L`) to other machines.
 - Changes panel: git branch, changed files with line counts, and diffs.
@@ -25,7 +31,13 @@ for every agent (needs you, working, done, idle).
   config, keys and prompts work as usual, and nothing is installed there. With
   tmux on the machine, panes keep running when the connection drops or Nmux
   closes; starting the pane again reattaches. Ports, Changes and Files work
-  there too, and Files can go to any folder on the machine.
+  there too, and Files can go to any folder on the machine. Wherever you type
+  a folder on a machine (a new workspace, the Files path bar), Nmux suggests
+  the folders that match as you type, at any depth: arrows to choose, `Tab` or
+  `Enter` to complete. Files on a machine has the same actions, plus Download,
+  which saves a file or folder into this computer's Downloads folder. Uploads
+  and downloads go through your `ssh` and need `tar` on the machine. Delete on
+  a machine is permanent.
 - Run `claude` in a shell pane and it is shown and tracked as a Claude Code
   pane until Claude exits. If Nmux closes first, the pane resumes that
   conversation.

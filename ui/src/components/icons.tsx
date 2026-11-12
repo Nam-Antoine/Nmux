@@ -47,6 +47,30 @@ export const Pencil = () => (
 export const FolderIcon = () => (
   <svg {...base}><path d="M2.5 5a1.5 1.5 0 011.5-1.5h2.2l1.3 1.5H12A1.5 1.5 0 0113.5 6.5v4.5A1.5 1.5 0 0112 12.5H4A1.5 1.5 0 012.5 11z" /></svg>
 )
+export const NewFile = () => (
+  <svg {...base}><path d="M4 2.5h5l3 3V13a.5.5 0 01-.5.5h-7A.5.5 0 014 13zM8 7.3v4M6 9.3h4" /></svg>
+)
+export const NewFolder = () => (
+  <svg {...base}><path d="M2.5 5a1.5 1.5 0 011.5-1.5h2.2l1.3 1.5H12A1.5 1.5 0 0113.5 6.5v4.5A1.5 1.5 0 0112 12.5H4A1.5 1.5 0 012.5 11zM8 7v3.4M6.3 8.7h3.4" /></svg>
+)
+export const Upload = () => (
+  <svg {...base}><path d="M8 10.5v-7M5 6l3-3 3 3M3 13h10" /></svg>
+)
+export const Download = () => (
+  <svg {...base}><path d="M8 3v7M5 7.5l3 3 3-3M3 13h10" /></svg>
+)
+export const Trash = () => (
+  <svg {...base}><path d="M3.5 4.5h9M6.5 4.5V3h3v1.5M4.8 4.5l.5 8a.5.5 0 00.5.5h4.4a.5.5 0 00.5-.5l.5-8" /></svg>
+)
+export const Copy = () => (
+  <svg {...base}><rect x="5.5" y="5.5" width="8" height="8" rx="1.5" /><path d="M10.5 5.5V4A1.5 1.5 0 009 2.5H4A1.5 1.5 0 002.5 4v5A1.5 1.5 0 004 10.5h1.5" /></svg>
+)
+export const Insert = () => (
+  <svg {...base}><path d="M2.5 8h7M7 5.5L9.5 8 7 10.5M13 3.5v9" /></svg>
+)
+export const External = () => (
+  <svg {...base}><path d="M9.5 3H13v3.5M13 3L8 8M11.5 9.5V12a1 1 0 01-1 1H4a1 1 0 01-1-1V5.5a1 1 0 011-1h2.5" /></svg>
+)
 
 export const Play = () => (
   <svg {...base} fill="currentColor" stroke="none"><path d="M5.2 3.4v9.2a.5.5 0 00.77.42l7-4.6a.5.5 0 000-.84l-7-4.6a.5.5 0 00-.77.42z" /></svg>

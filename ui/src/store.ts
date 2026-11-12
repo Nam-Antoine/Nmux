@@ -121,7 +121,9 @@ export async function start(): Promise<void> {
   })
   await onConnected(() => void refresh())
   await onFileDrop((paths, x, y) => {
-    const under = (document.elementFromPoint(x, y) as HTMLElement | null)?.closest<HTMLElement>('[data-pane]')
+    const at = document.elementFromPoint(x, y) as HTMLElement | null
+    if (at?.closest('[data-drop]')) return
+    const under = at?.closest<HTMLElement>('[data-pane]')
     const pane = under ? Number(under.dataset.pane) : activeTab(store)?.focused
     if (pane === undefined || paths.length === 0) return
     terminals.paste(pane, paths.map((p) => (/\s/.test(p) ? `"${p}"` : p)).join(' ') + ' ')

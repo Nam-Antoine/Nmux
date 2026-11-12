@@ -168,7 +168,15 @@ impl Hub {
     }
 
     fn workspace_roots(&self) -> Vec<String> {
-        self.lock().state.workspaces.iter().map(|w| w.cwd.clone()).collect()
+        self.machine_roots(None)
+    }
+
+    fn machine_roots(&self, machine: Option<MachineId>) -> Vec<String> {
+        self.lock().state.workspaces.iter().filter(|w| w.machine == machine).map(|w| w.cwd.clone()).collect()
+    }
+
+    fn downloads(&self) -> Result<PathBuf, String> {
+        files::downloads(&self.config.env).ok_or_else(|| "could not find the Downloads folder".into())
     }
 
     fn handle_unlocked(&self, op: Op) -> Result<Result<Reply, Op>, String> {
@@ -176,17 +184,76 @@ impl Hub {
             self.emit(Event::Forwards { forwards: forwards.clone() });
             Reply::Forwards { forwards }
         };
+        let env = &self.config.env;
+        let far = |machine: MachineId, path: &str| -> Result<(String, String), String> {
+            Ok((self.machine_target(machine)?, validate::remote_path(path).map_err(|r| r.0)?))
+        };
         Ok(Ok(match op {
+            Op::MakeDir { path, machine } => {
+                match machine {
+                    Some(machine) => {
+                        let (target, path) = far(machine, &path)?;
+                        remote::make_dir(&target, &path, env)?
+                    }
+                    None => files::make_dir(&path, &self.workspace_roots())?,
+                }
+                Reply::Done
+            }
+            Op::MakeFile { path, machine } => {
+                match machine {
+                    Some(machine) => {
+                        let (target, path) = far(machine, &path)?;
+                        remote::make_file(&target, &path, env)?
+                    }
+                    None => files::make_file(&path, &self.workspace_roots())?,
+                }
+                Reply::Done
+            }
+            Op::RenamePath { from, to, machine } => {
+                match machine {
+                    Some(machine) => {
+                        let (target, from) = far(machine, &from)?;
+                        let to = validate::remote_path(&to).map_err(|r| r.0)?;
+                        remote::rename(&target, &from, &to, &self.machine_roots(Some(machine)), env)?
+                    }
+                    None => files::rename(&from, &to, &self.workspace_roots())?,
+                }
+                Reply::Done
+            }
+            Op::RemovePath { path, machine } => {
+                match machine {
+                    Some(machine) => {
+                        let (target, path) = far(machine, &path)?;
+                        remote::remove(&target, &path, &self.machine_roots(Some(machine)), env)?
+                    }
+                    None => files::remove(&path, &self.workspace_roots())?,
+                }
+                Reply::Done
+            }
+            Op::UploadPaths { sources, to, overwrite, machine } => {
+                match machine {
+                    Some(machine) => {
+                        let (target, to) = far(machine, &to)?;
+                        remote::upload_paths(&target, &sources, &to, overwrite, env)?
+                    }
+                    None => files::upload(&sources, &to, overwrite, &self.workspace_roots())?,
+                }
+                Reply::Done
+            }
+            Op::DownloadPath { path, machine } => {
+                let (target, path) = far(machine, &path)?;
+                Reply::Path { path: files::display(&remote::download(&target, &path, &self.downloads()?, env)?) }
+            }
             Op::ListDir { path, machine } => {
                 let (path, entries) = match machine {
-                    Some(machine) => remote::list_dir(&self.machine_target(machine)?, &validate::remote_cwd(&path).map_err(|r| r.0)?, &self.config.env)?,
+                    Some(machine) => remote::list_dir(&self.machine_target(machine)?, &validate::remote_path(&path).map_err(|r| r.0)?, &self.config.env)?,
                     None => files::list_dir(&path, &self.workspace_roots())?,
                 };
                 Reply::Dir { path, entries }
             }
             Op::ReadFile { path, machine } => Reply::File {
                 file: match machine {
-                    Some(machine) => remote::read_file(&self.machine_target(machine)?, &validate::remote_cwd(&path).map_err(|r| r.0)?, &self.config.env)?,
+                    Some(machine) => remote::read_file(&self.machine_target(machine)?, &validate::remote_path(&path).map_err(|r| r.0)?, &self.config.env)?,
                     None => files::read_file(&path, &self.workspace_roots())?,
                 },
             },
@@ -280,6 +347,12 @@ impl Hub {
             Op::Hello { .. } => Err("already connected".into()),
             Op::ListDir { .. }
             | Op::ReadFile { .. }
+            | Op::MakeDir { .. }
+            | Op::MakeFile { .. }
+            | Op::RenamePath { .. }
+            | Op::RemovePath { .. }
+            | Op::UploadPaths { .. }
+            | Op::DownloadPath { .. }
             | Op::CheckPath { .. }
             | Op::PasteImage { .. }
             | Op::ListPorts
@@ -761,7 +834,7 @@ impl Hub {
         }
     }
 
-    fn watch_shells(&self) {
+    fn watch_claude(&self) {
         let roots: HashMap<u32, PaneId> = {
             let mut inner = self.lock();
             inner.ticks = inner.ticks.wrapping_add(1);
@@ -771,7 +844,7 @@ impl Hub {
             inner
                 .runtimes
                 .iter()
-                .filter(|(id, _)| inner.state.panes.get(id).is_some_and(|p| p.kind == PaneKind::Shell && p.machine.is_none()))
+                .filter(|(id, _)| inner.state.panes.get(id).is_some_and(|p| p.kind != PaneKind::Cloud && p.machine.is_none()))
                 .filter_map(|(id, rt)| rt.process.as_ref().and_then(|p| p.pid).map(|pid| (pid, *id)))
                 .collect()
         };
@@ -784,7 +857,12 @@ impl Hub {
         let inner = &mut *inner;
         let mut changed = false;
         for id in roots.values() {
-            if inner.state.set_runs_claude(*id, found.get(id).cloned()) {
+            let found = found.get(id).cloned();
+            let session = found.as_ref().and_then(|f| f.session_id.clone());
+            if session.is_some_and(|session| inner.state.set_claude_session(*id, session)) {
+                changed = true;
+            }
+            if inner.state.set_runs_claude(*id, found) {
                 changed = true;
                 if let Some(rt) = inner.runtimes.get_mut(id) {
                     rt.detect_dirty = true;
@@ -797,7 +875,7 @@ impl Hub {
     }
 
     pub fn tick(&self) {
-        self.watch_shells();
+        self.watch_claude();
         let to_save = {
             let mut inner = self.lock();
             let inner = &mut *inner;
