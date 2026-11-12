@@ -37,8 +37,8 @@ const COMMANDS: &[Command] = &[
     ("previous-window", "prev", "t:", "[-t session]"),
     ("rename-session", "rename", "t:", "[-t session] name"),
     ("rename-window", "renamew", "t:", "[-t window] name"),
-    ("resize-pane", "resizep", "DLRt:UZ", "[-DLRUZ] [-t pane] [cells]"),
-    ("respawn-pane", "respawnp", "kt:", "[-k] [-t pane]"),
+    ("resize-pane", "resizep", "DLRt:Ux:y:Z", "[-DLRUZ] [-x width] [-y height] [-t pane] [cells]"),
+    ("respawn-pane", "respawnp", "kt:", "[-k] [-t pane] [command]"),
     ("respawn-window", "respawnw", "kt:", "[-k] [-t window]"),
     ("rotate-window", "rotatew", "Dt:U", "[-DU] [-t window]"),
     ("save-buffer", "saveb", "ab:", "[-a] [-b buffer] path"),
@@ -95,7 +95,7 @@ const ABSENT: &[(&str, &str, bool)] = &[
     ("show-environment", "showenv", false),
     ("show-hooks", "", false),
     ("show-messages", "showmsgs", false),
-    ("show-options", "show", false),
+    ("show-options", "show", true),
     ("show-prompt-history", "showphist", false),
     ("show-window-options", "showw", false),
     ("source-file", "source", true),
@@ -220,6 +220,14 @@ fn choices(body: &str) -> Vec<&str> {
 
 fn percent(text: &str) -> Result<f32, String> {
     text.trim_end_matches('%').parse::<f32>().map(|p| p / 100.0).map_err(|_| format!("bad size \"{text}\""))
+}
+
+fn posix_shell() -> Option<PathBuf> {
+    let beside_git = std::env::var_os("PATH").and_then(|path| {
+        std::env::split_paths(&path).find(|dir| dir.join("git.exe").is_file()).and_then(|dir| Some(dir.parent()?.join("bin").join("bash.exe")))
+    });
+    let installed = std::env::var_os("ProgramFiles").map(|dir| PathBuf::from(dir).join("Git").join("bin").join("bash.exe"));
+    [std::env::var_os("CLAUDE_CODE_GIT_BASH_PATH").map(PathBuf::from), beside_git, installed].into_iter().flatten().find(|bash| bash.is_file())
 }
 
 fn saved(dir: &PathBuf) -> Vec<(SystemTime, PathBuf)> {
@@ -425,6 +433,27 @@ impl Cli {
         Ok((snapshot.cols as f32, snapshot.rows as f32))
     }
 
+    async fn start(&mut self, pane: PaneId, command: String) -> Result<(), String> {
+        let here = cfg!(windows) && self.pane(pane)?.machine.is_none();
+        let line = match posix_shell().filter(|_| here && !command.trim().is_empty()) {
+            Some(bash) => {
+                let dir = self.data_dir.join("tmux");
+                let script = dir.join(format!("pane-{}.sh", pane.0));
+                for (_, old) in saved(&dir) {
+                    let of = old.file_stem().and_then(|name| name.to_string_lossy().strip_prefix("pane-")?.parse().ok());
+                    if !of.is_some_and(|id| self.state.panes.contains_key(&PaneId(id))) {
+                        let _ = std::fs::remove_file(old);
+                    }
+                }
+                std::fs::create_dir_all(&dir).and_then(|_| std::fs::write(&script, &command)).map_err(|e| e.to_string())?;
+                let quoted = |path: &PathBuf| format!("'{}'", path.to_string_lossy().replace('\'', "''"));
+                format!("& {} {}", quoted(&bash), quoted(&script))
+            }
+            None => command,
+        };
+        self.type_when_ready(pane, PaneKind::Shell, line).await
+    }
+
     async fn opened(&mut self, pane: PaneId, back: [Option<PaneId>; 3], o: &Opts) -> Result<(), String> {
         for back in back.into_iter().flatten().filter(|_| o.has('d')) {
             self.call(Op::FocusPane { pane: back }).await?;
@@ -433,7 +462,7 @@ impl Cli {
         if o.has('P') {
             println!("{}", self.expand(o.get('F').unwrap_or("#{session_name}:#{window_index}.#{pane_index}"), &self.place(pane)?));
         }
-        self.type_when_ready(pane, PaneKind::Shell, o.words.join(" ")).await
+        self.start(pane, o.words.join(" ")).await
     }
 
     fn buffer(&self, name: Option<&str>, new: bool) -> Result<PathBuf, String> {
@@ -625,20 +654,39 @@ impl Cli {
                 self.all(past.into_iter().map(|b| Op::SwapPanes { a: moved, b }).collect()).await?;
             }
             "resize-pane" => {
-                let pane = self.target(t, Level::Pane)?.pane;
-                let Some(side) = o.side() else {
-                    if !o.has('Z') {
-                        return fail(format!("usage: nc {command} {usage}"));
-                    }
+                let at = self.target(t, Level::Pane)?;
+                let pane = at.pane;
+                if o.has('Z') {
                     self.call(Op::ToggleZoom { pane }).await?;
                     return Ok(());
-                };
-                let cells = word.map_or(Ok(1.0), |n| n.parse::<f32>().map_err(|_| format!("bad size \"{n}\"")))?;
+                }
+                let rects = self.state.workspaces[at.ws].tabs[at.tab].layout.rects();
+                let Some((_, rect)) = rects.into_iter().find(|(id, _)| *id == pane) else { return fail("that pane was closed") };
                 let (cols, rows) = self.size(pane).await?;
-                let (edge, other, room) = if matches!(side, Side::Left | Side::Right) { (Side::Right, Side::Left, cols) } else { (Side::Down, Side::Up, rows) };
-                let delta = cells / (2.0 * room) * if side == edge { 1.0 } else { -1.0 };
-                if self.call(Op::ResizeSplit { pane, side: edge, delta }).await? == (Reply::Flag { value: false }) {
-                    self.call(Op::ResizeSplit { pane, side: other, delta: -delta }).await?;
+                let share = |size: &str, cells: f32, now: f32| match size.strip_suffix('%') {
+                    Some(part) => percent(part),
+                    None => size.parse::<f32>().map(|n| n * now / cells).map_err(|_| format!("bad size \"{size}\"")),
+                };
+                let mut moves = Vec::new();
+                if let Some(width) = o.get('x') {
+                    moves.push((Side::Right, Side::Left, share(width, cols, rect.w)? - rect.w));
+                }
+                if let Some(height) = o.get('y') {
+                    moves.push((Side::Down, Side::Up, share(height, rows, rect.h)? - rect.h));
+                }
+                if let Some(side) = o.side() {
+                    let wide = matches!(side, Side::Left | Side::Right);
+                    let by = share(word.unwrap_or("1"), if wide { cols } else { rows }, if wide { rect.w } else { rect.h })?;
+                    let (edge, other) = if wide { (Side::Right, Side::Left) } else { (Side::Down, Side::Up) };
+                    moves.push((edge, other, if side == edge { by } else { -by }));
+                }
+                if moves.is_empty() {
+                    return fail(format!("usage: nc {command} {usage}"));
+                }
+                for (edge, other, delta) in moves {
+                    if self.call(Op::ResizeSplit { pane, side: edge, delta }).await? == (Reply::Flag { value: false }) {
+                        self.call(Op::ResizeSplit { pane, side: other, delta: -delta }).await?;
+                    }
                 }
             }
             "respawn-pane" | "respawn-window" => {
@@ -652,6 +700,7 @@ impl Cli {
                         self.call(Op::StopPane { pane }).await?;
                     }
                     self.call(Op::RestartPane { pane }).await?;
+                    self.start(pane, o.words.join(" ")).await?;
                 }
             }
             "send-keys" => {

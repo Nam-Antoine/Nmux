@@ -70,7 +70,10 @@ of `nc list-commands`. A session is a workspace and a window is a tab; `-t`
 takes an address like `n8b` or tmux's `session:window.pane`, `%pane`,
 `@window` and `$session`. Every pane also has a `tmux` command that is this
 same tool, and the `TMUX` and `TMUX_PANE` variables, so scripts and tools
-written for tmux open and drive panes in Nmux. Commands about tmux's own
+written for tmux open and drive panes in Nmux: Claude Code's agent teams
+(`claude --teammate-mode tmux`) put each teammate in a pane. A command given
+to `split-window`, `new-window` or `respawn-pane` runs in Git Bash on
+Windows, as tmux commands are written for a POSIX shell. Commands about tmux's own
 keys, options, layouts and copy mode have nothing to map to: `nc` refuses
 them, and `tmux` ignores the ones that only change settings.
 
