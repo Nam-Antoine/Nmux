@@ -418,6 +418,7 @@ impl Hub {
                 let label = validate::name(&label).map_err(|r| r.0)?;
                 self.done(inner, |s| s.rename_machine(machine, label))
             }
+            Op::TrustMachine { machine, trusted } => self.done(inner, |s| s.trust_machine(machine, trusted)),
             Op::RemoveMachine { machine } => self.done(inner, |s| s.remove_machine(machine)),
             Op::CreateTab { workspace, name, pane } => {
                 let name = name.as_deref().filter(|n| !n.trim().is_empty()).map(validate::name).transpose().map_err(|r| r.0)?;
@@ -651,6 +652,9 @@ impl Hub {
             remote::end_sessions(target, sessions, self.config.env.clone());
         }
         for pane in &closed.panes {
+            if let Some(relay) = &self.relay {
+                relay.forget(*pane);
+            }
             if let Some(mut rt) = inner.runtimes.remove(pane) {
                 graveyard.extend(rt.process.take());
             }
@@ -722,7 +726,7 @@ impl Hub {
                     _ => remote::Program::Shell,
                 };
                 let session = remote::tmux_session(&remote::owner(&self.config.env), id, pane.created_at);
-                let link = self.relay.as_ref().map(|relay| relay.link(id));
+                let link = self.relay.as_ref().and_then(|relay| relay.link(id).ok());
                 let script = remote::script(&pane.cwd, &session, &program, link.as_ref().map(|link| link.note.as_str()));
                 remote::launch(target.as_deref().unwrap_or("removed-machine.invalid"), &script, link.as_ref().map(|link| link.forward.as_str()), &env)
             }

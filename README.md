@@ -80,10 +80,16 @@ them, and `tmux` ignores the ones that only change settings.
 Machines get `nc` too. Each time Nmux checks a machine it puts a small `nc`
 script in `~/.nmux/bin` there and adds that folder to the shell's `PATH`. In
 a pane on the machine it is the same tool, sent over the pane's own SSH
-connection to the Nmux on your computer, so an agent there can read and
-drive every pane you have. Outside a pane it runs the machine's own `nc`.
-It needs `bash` on the machine. Whoever can use that account on the machine
-can drive your panes while a pane to it is open.
+connection to the Nmux on your computer. Outside a pane it runs the
+machine's own `nc`. It needs `bash` on the machine.
+
+A machine's `nc` reaches only the panes on that machine: it cannot read or
+type into panes on your computer or on other machines, send raw requests,
+or touch files here. To let an agent on a machine work with every pane,
+right-click the machine and choose "Let its nc reach every pane"; whoever
+can use that account on the machine can then drive your panes. Each pane's
+link has its own secrets, kept in a file only that account can read, and
+Nmux proves itself to `nc` before `nc` sends anything secret.
 
 A message sent from one pane to an agent starts with who sent it and how to
 reply, so agents in different workspaces can ask each other questions. `nc` is

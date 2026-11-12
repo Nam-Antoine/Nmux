@@ -129,6 +129,14 @@ function MachineGroup({ machine, spaces, activeId, running }: { machine?: Machin
     void sure(`Remove "${machine.label}"? Nothing is stopped on the machine.`).then((yes) => (yes ? run({ op: 'removeMachine', machine: machine.id }) : null))
   }
 
+  const trust = (): void => {
+    if (!machine) return
+    const set = (trusted: boolean): Promise<unknown> => run({ op: 'trustMachine', machine: machine.id, trusted })
+    if (machine.trusted) return void set(false)
+    const warn = `Let nc on "${machine.label}" reach every pane? Anyone who can use that account can then read and type into the panes on this computer.`
+    void sure(warn).then((yes) => (yes ? set(true) : null))
+  }
+
   return (
     <>
       <div
@@ -149,6 +157,9 @@ function MachineGroup({ machine, spaces, activeId, running }: { machine?: Machin
             </button>
             <button onClick={() => setRenaming(true)}>
               <Pencil /> Rename
+            </button>
+            <button onClick={trust}>
+              <Keyboard /> {machine?.trusted ? 'Keep its nc to its own panes' : 'Let its nc reach every pane'}
             </button>
             <button className="danger" onClick={remove}>
               <Close /> Remove machine

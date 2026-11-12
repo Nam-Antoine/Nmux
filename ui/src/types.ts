@@ -23,6 +23,7 @@ export interface Machine {
   detail?: string
   tmux: boolean
   claude: boolean
+  trusted: boolean
 }
 
 export interface Pane {
@@ -84,6 +85,7 @@ export type Op =
   | { op: 'createWorkspace'; name?: string; cwd: string; pane: PaneSpec; machine?: MachineId }
   | { op: 'addMachine'; label?: string; target: string }
   | { op: 'renameMachine'; machine: MachineId; label: string }
+  | { op: 'trustMachine'; machine: MachineId; trusted: boolean }
   | { op: 'removeMachine'; machine: MachineId }
   | { op: 'checkMachine'; machine: MachineId }
   | { op: 'listSshHosts' }

@@ -7,6 +7,8 @@ use nmux_proto::{Op, Reply};
 
 use super::{fail, key_bytes, pane_state, Cli};
 
+const NO_FILES: &str = "from a machine, buffers are loaded and saved through - only";
+
 type Command = (&'static str, &'static str, &'static str, &'static str);
 
 const JOIN: &str = "[-bdhv] [-s pane] [-t pane]";
@@ -465,8 +467,15 @@ impl Cli {
         self.start(pane, o.words.join(" ")).await
     }
 
+    fn buffers(&self) -> PathBuf {
+        self.data_dir.join(match self.far.filter(|_| self.fenced) {
+            Some(machine) => format!("buffers-{}", machine.0),
+            None => "buffers".to_string(),
+        })
+    }
+
     fn buffer(&self, name: Option<&str>, new: bool) -> Result<PathBuf, String> {
-        let dir = self.data_dir.join("buffers");
+        let dir = self.buffers();
         match name {
             Some(name) if name.is_empty() || !name.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_') => {
                 fail("a buffer name is made of letters, digits, - and _")
@@ -480,7 +489,7 @@ impl Cli {
     fn keep(&self, name: Option<&str>, text: &str, append: bool) -> Result<(), String> {
         let path = self.buffer(name, !append)?;
         let before = if append { std::fs::read_to_string(&path).unwrap_or_default() } else { String::new() };
-        std::fs::create_dir_all(self.data_dir.join("buffers")).and_then(|_| std::fs::write(&path, before + text)).map_err(|e| e.to_string())
+        std::fs::create_dir_all(self.buffers()).and_then(|_| std::fs::write(&path, before + text)).map_err(|e| e.to_string())
     }
 
     fn kept(&self, name: Option<&str>) -> Result<(PathBuf, String), String> {
@@ -520,9 +529,10 @@ impl Cli {
             "new-session" => {
                 let cwd = match spec.cwd.take() {
                     Some(cwd) => cwd,
+                    None if self.far.is_some() => "~".to_string(),
                     None => std::env::current_dir().map_err(|e| e.to_string())?.to_string_lossy().into_owned(),
                 };
-                let created = self.open(Op::CreateWorkspace { name: o.get('s').map(str::to_string), cwd, pane: spec, machine: None }).await?;
+                let created = self.open(Op::CreateWorkspace { name: o.get('s').map(str::to_string), cwd, pane: spec, machine: self.far }).await?;
                 if let Some(name) = o.get('n') {
                     self.call(Op::RenameTab { tab: created.tab, name: Some(name.to_string()) }).await?;
                 }
@@ -776,6 +786,7 @@ impl Cli {
                 let mut text = String::new();
                 match named()?.as_str() {
                     "-" => std::io::stdin().read_to_string(&mut text).map(drop),
+                    _ if self.far.is_some() => return fail(NO_FILES),
                     path => std::fs::read_to_string(path).map(|read| text = read),
                 }
                 .map_err(|e| e.to_string())?;
@@ -785,6 +796,7 @@ impl Cli {
                 let text = self.kept(o.get('b'))?.1;
                 match named()?.as_str() {
                     "-" => print!("{text}"),
+                    _ if self.far.is_some() => return fail(NO_FILES),
                     path => std::fs::OpenOptions::new()
                         .create(true)
                         .write(true)
@@ -798,7 +810,7 @@ impl Cli {
             "show-buffer" => print!("{}", self.kept(o.get('b'))?.1),
             "delete-buffer" => std::fs::remove_file(self.kept(o.get('b'))?.0).map_err(|e| e.to_string())?,
             "list-buffers" => {
-                for (_, path) in saved(&self.data_dir.join("buffers")) {
+                for (_, path) in saved(&self.buffers()) {
                     let text = std::fs::read_to_string(&path).unwrap_or_default();
                     let start: String = text.chars().take(50).collect();
                     println!("{}: {} bytes: {start:?}", path.file_name().unwrap_or_default().to_string_lossy(), text.len());

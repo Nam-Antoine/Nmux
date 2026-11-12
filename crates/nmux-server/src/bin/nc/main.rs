@@ -2,7 +2,7 @@ use std::io::IsTerminal;
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
-use nmux_core::{AgentState, Created, Pane, PaneId, PaneKind, PaneSpec, PaneStatus, State};
+use nmux_core::{AgentState, Created, MachineId, Pane, PaneId, PaneKind, PaneSpec, PaneStatus, State, TabId, WorkspaceId};
 use nmux_proto::{Op, Reply};
 use nmux_server::client::Client;
 use nmux_server::screen::SCROLLBACK_LINES;
@@ -46,8 +46,9 @@ tmux commands
 
 Other machines
   Nmux puts nc on every machine it knows, in ~/.nmux/bin. In a pane there
-  it is this same tool, talking to the Nmux on your computer. Outside a
-  pane it runs the machine's own nc.
+  it is this same tool, talking to the Nmux on your computer, and it
+  reaches only the panes on that machine until you allow more from the
+  machine's menu in Nmux. Outside a pane it runs the machine's own nc.
 
 More
   whoami                      the address of the pane this runs in
@@ -63,6 +64,8 @@ Examples
   nc wait n8 && nc read n8                    wait for it, read its answer
   nc run --bg claude "review src/x.rs"        a helper agent in a new tab
 A message sent from a pane to an agent starts with who sent it and how to reply."#;
+
+const FENCE: &str = "nc on this machine reaches only this machine's panes; allow more from the machine's menu in Nmux";
 
 const FLAGS_WITH_VALUE: [&str; 3] = ["--in", "--output", "--timeout"];
 
@@ -156,11 +159,47 @@ struct Cli {
     state: State,
     data_dir: PathBuf,
     as_tmux: bool,
+    far: Option<MachineId>,
+    fenced: bool,
 }
 
 impl Cli {
     async fn call(&self, op: Op) -> Result<Reply, String> {
+        if self.fenced && !self.own(&op) {
+            return fail(FENCE);
+        }
         self.client.call(op).await
+    }
+
+    fn own(&self, op: &Op) -> bool {
+        let home = self.far;
+        let pane = |id: &PaneId| self.state.panes.get(id).is_some_and(|p| p.machine == home);
+        let space = |id: &WorkspaceId| self.state.workspaces.iter().any(|w| w.id == *id && w.machine == home);
+        let tab = |id: &TabId| self.state.workspaces.iter().any(|w| w.machine == home && w.tabs.iter().any(|t| t.id == *id));
+        match op {
+            Op::GetState => true,
+            Op::CreateWorkspace { machine, .. } => *machine == home,
+            Op::Attach { pane: p }
+            | Op::SendText { pane: p, .. }
+            | Op::Write { pane: p, .. }
+            | Op::StopPane { pane: p }
+            | Op::ClosePane { pane: p }
+            | Op::RestartPane { pane: p }
+            | Op::FocusPane { pane: p }
+            | Op::FocusSide { pane: p, .. }
+            | Op::SplitPane { target: p, .. }
+            | Op::ResizeSplit { pane: p, .. }
+            | Op::BreakPane { pane: p }
+            | Op::RenamePane { pane: p, .. }
+            | Op::ToggleZoom { pane: p } => pane(p),
+            Op::MovePane { pane: a, target: b, .. } | Op::SwapPanes { a, b } => pane(a) && pane(b),
+            Op::RenameTab { tab: t, .. } | Op::CloseTab { tab: t } | Op::SelectTab { tab: t } => tab(t),
+            Op::CreateTab { workspace: w, .. }
+            | Op::CloseWorkspace { workspace: w }
+            | Op::RenameWorkspace { workspace: w, .. }
+            | Op::SelectWorkspace { workspace: w } => space(w),
+            _ => false,
+        }
     }
 
     async fn refresh(&mut self) -> Result<(), String> {
@@ -393,7 +432,19 @@ async fn run(mut raw: Vec<String>) -> Result<(), String> {
     let rest = raw.get(1..).unwrap_or_default();
 
     let (client, _events) = nmux_server::client::connect(&data_dir).await.map_err(|e| format!("Nmux is not running ({e})"))?;
+    let Reply::State { state } = client.call(Op::GetState).await? else { return fail("unexpected reply") };
+    let far = match std::env::var_os("NMUX_RELAY") {
+        Some(_) => {
+            let me = std::env::var("NMUX_PANE_ID").ok().and_then(|id| state.panes.get(&PaneId(id.parse().ok()?)));
+            Some(me.and_then(|pane| pane.machine).ok_or("Nmux does not know this pane; restart it")?)
+        }
+        None => None,
+    };
+    let fenced = far.is_some_and(|machine| !state.machine(machine).is_some_and(|m| m.trusted));
     if command == "api" {
+        if fenced {
+            return fail(FENCE);
+        }
         let op: Op = serde_json::from_str(rest.first().ok_or("usage: nc api '<json request>'")?).map_err(|e| format!("bad request: {e}"))?;
         if matches!(op, Op::Hello { .. }) {
             return fail("hello is sent for you");
@@ -402,8 +453,7 @@ async fn run(mut raw: Vec<String>) -> Result<(), String> {
         println!("{}", serde_json::to_string_pretty(&reply).map_err(|e| e.to_string())?);
         return Ok(());
     }
-    let Reply::State { state } = client.call(Op::GetState).await? else { return fail("unexpected reply") };
-    let mut cli = Cli { client, state, data_dir, as_tmux };
+    let mut cli = Cli { client, state, data_dir, as_tmux, far, fenced };
     if as_tmux {
         return tmux::run(&mut cli, &command, rest).await;
     }

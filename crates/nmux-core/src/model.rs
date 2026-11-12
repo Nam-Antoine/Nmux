@@ -37,6 +37,8 @@ pub struct Machine {
     pub tmux: bool,
     #[serde(default)]
     pub claude: bool,
+    #[serde(default)]
+    pub trusted: bool,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Debug, Serialize, Deserialize)]
@@ -709,6 +711,7 @@ impl State {
             detail: None,
             tmux: false,
             claude: false,
+            trusted: false,
         });
         Ok(id)
     }
@@ -719,6 +722,11 @@ impl State {
         }
         let machine = self.machines.iter_mut().find(|m| m.id == id).ok_or(ModelError::Invalid("no such machine"))?;
         machine.label = label;
+        Ok(())
+    }
+
+    pub fn trust_machine(&mut self, id: MachineId, trusted: bool) -> Res<()> {
+        self.machines.iter_mut().find(|m| m.id == id).ok_or(ModelError::Invalid("no such machine"))?.trusted = trusted;
         Ok(())
     }
 

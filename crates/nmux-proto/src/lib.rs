@@ -33,6 +33,7 @@ pub enum Op {
     #[serde(rename_all = "camelCase")]
     AddMachine { label: Option<String>, target: String },
     RenameMachine { machine: MachineId, label: String },
+    TrustMachine { machine: MachineId, trusted: bool },
     RemoveMachine { machine: MachineId },
     CheckMachine { machine: MachineId },
     ListSshHosts,
