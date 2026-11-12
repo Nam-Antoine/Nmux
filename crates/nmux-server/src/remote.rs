@@ -284,8 +284,24 @@ pub fn rename(target: &str, from: &str, to: &str, roots: &[String], env: &Env) -
     checked(target, &script, env).map(drop)
 }
 
+const TRASH: &str = "\"$HOME/.nmux-trash\"";
+
 pub fn remove(target: &str, path: &str, roots: &[String], env: &Env) -> Result<(), String> {
-    checked(target, &format!("{}; if {EXISTS}; then rm -rf \"$p\"; {MISSING}", movable(path, roots)?), env).map(drop)
+    let script = format!(
+        "{}; if {EXISTS}; then find {TRASH} -mindepth 1 -maxdepth 1 -mtime +7 -exec rm -rf {{}} + 2>/dev/null; \
+         t={TRASH}/$(date +%s)-$$; mkdir -p \"$t\" && printf '%s' \"$p\" > \"$t/from\" && mv \"$p\" \"$t/item\"; {MISSING}",
+        movable(path, roots)?
+    );
+    checked(target, &script, env).map(drop)
+}
+
+pub fn restore(target: &str, path: &str, env: &Env) -> Result<(), String> {
+    let script = format!(
+        "{}; b=; for t in {TRASH}/*; do if [ \"$(cat \"$t/from\" 2>/dev/null)\" = \"$p\" ] && {{ [ -e \"$t/item\" ] || [ -L \"$t/item\" ]; }}; then b=$t; fi; done; \
+         [ -n \"$b\" ] || {{ echo 'nothing to undo' >&2; exit 1; }}; mv \"$b/item\" \"$p\" && rm -rf \"$b\"",
+        fresh(path)?
+    );
+    checked(target, &script, env).map(drop)
 }
 
 struct Transfer {
@@ -602,6 +618,15 @@ mod tests {
         refused("download a missing one", download(&target, &at("nope"), &downloads, &env).map(drop), "no such file or folder");
         assert_eq!(std::fs::read_dir(&downloads).unwrap().count(), 5, "no staging folder is left in Downloads");
 
+        remove(&target, &at("big file.bin"), &[], &env).unwrap();
+        remove(&target, &at("it's a dir"), &[], &env).unwrap();
+        assert_eq!(names(&base), ["link.bin", "linkdir"]);
+        restore(&target, &at("it's a dir"), &env).unwrap();
+        restore(&target, &at("big file.bin"), &env).unwrap();
+        assert!(["it's a dir", "big file.bin"].iter().all(|name| names(&base).contains(&name.to_string())), "a delete can be undone");
+        assert!(names(&at("it's a dir")).contains(&"moved folder".to_string()), "with what was inside");
+        refused("undo onto a taken name", restore(&target, &at("big file.bin"), &env), "already exists");
+        refused("undo what was never deleted", restore(&target, &at("nope"), &env), "nothing to undo");
         remove(&target, &at("big file.bin"), &[], &env).unwrap();
         remove(&target, &at("it's a dir"), &[], &env).unwrap();
         refused("remove a missing one", remove(&target, &at("nope"), &[], &env), "no such file or folder");

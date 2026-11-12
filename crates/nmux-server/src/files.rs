@@ -119,6 +119,17 @@ pub fn remove(path: &str, roots: &[String]) -> Result<(), String> {
     trash::delete(display(&movable(path, roots)?)).map_err(|e| e.to_string())
 }
 
+pub fn restore(path: &str, roots: &[String]) -> Result<(), String> {
+    let wanted = display(&fresh(path, roots)?);
+    let item = trash::os_limited::list()
+        .map_err(|e| e.to_string())?
+        .into_iter()
+        .filter(|item| display(&item.original_path()).eq_ignore_ascii_case(&wanted))
+        .max_by_key(|item| item.time_deleted)
+        .ok_or("nothing to undo")?;
+    trash::os_limited::restore_all([item]).map_err(|e| e.to_string())
+}
+
 pub fn upload_names(sources: &[String]) -> Result<Vec<(PathBuf, String)>, String> {
     let mut found: Vec<(PathBuf, String)> = Vec::new();
     for source in sources {
@@ -339,8 +350,14 @@ mod tests {
         assert!(remove(&p("missing"), &r).is_err());
         assert!(inner.is_dir() && dir.path().join("secret.txt").is_file());
 
+        std::fs::write(p("src/kept.txt"), "kept").unwrap();
         remove(&p("src"), &r).unwrap();
         assert!(!root.join("src").exists());
+        restore(&p("src"), &r).unwrap();
+        assert_eq!(std::fs::read_to_string(p("src/kept.txt")).unwrap(), "kept", "a delete can be undone");
+        assert!(restore(&p("src"), &r).unwrap_err().contains("already exists"));
+        assert!(restore(&p("never-there"), &r).unwrap_err().contains("nothing to undo"));
+        assert!(restore(&outside, &r).unwrap_err().contains("outside"));
     }
 
     #[test]

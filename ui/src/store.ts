@@ -10,6 +10,11 @@ export type Dialog =
   | { type: 'help' }
   | null
 
+export interface ToastAction {
+  label: string
+  run: () => void
+}
+
 export type Panel = 'files' | 'ports' | 'changes'
 
 export function togglePanel(which: Panel): void {
@@ -27,6 +32,7 @@ export interface Store {
   forwards: Forward[]
   prefix: boolean
   toast: string | null
+  toastAction: ToastAction | null
 }
 
 let store: Store = {
@@ -39,7 +45,8 @@ let store: Store = {
   panel: null,
   forwards: [],
   prefix: false,
-  toast: null
+  toast: null,
+  toastAction: null
 }
 
 const listeners = new Set<() => void>()
@@ -71,10 +78,10 @@ function setState(state: State): void {
 }
 
 let toastTimer: number | undefined
-export function toast(message: string): void {
+export function toast(message: string, action: ToastAction | null = null): void {
   window.clearTimeout(toastTimer)
-  update({ toast: message })
-  toastTimer = window.setTimeout(() => update({ toast: null }), 5000)
+  update({ toast: message, toastAction: action })
+  toastTimer = window.setTimeout(() => update({ toast: null, toastAction: null }), action ? 12_000 : 5000)
 }
 
 export async function run(op: Parameters<typeof call>[0]): Promise<Awaited<ReturnType<typeof call>> | null> {

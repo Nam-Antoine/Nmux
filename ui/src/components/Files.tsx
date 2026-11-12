@@ -308,13 +308,15 @@ export function Files(): React.JSX.Element {
 
   const remove = (target: Target): void => {
     const what = `"${target.name}"${target.dir ? ' and everything inside it' : ''}`
-    const ask = machine === undefined ? `Move ${what} to the Recycle Bin?` : `Delete ${what} from ${label ?? 'the machine'}? This cannot be undone.`
+    const ask = machine === undefined ? `Move ${what} to the Recycle Bin?` : `Delete ${what} from ${label ?? 'the machine'}? It can be put back for 7 days.`
     void sure(ask)
       .then((yes) => (yes ? run({ op: 'removePath', path: target.path, machine }) : null))
       .then((ok) => {
         if (!ok) return
         forget(target.path)
         refresh(target.parent)
+        const undo = (): void => void run({ op: 'restorePath', path: target.path, machine }).then((back) => back && refresh(target.parent))
+        toast(`Deleted "${target.name}".`, { label: 'Undo', run: undo })
       })
   }
 

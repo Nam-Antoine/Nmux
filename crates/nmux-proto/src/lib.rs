@@ -99,6 +99,11 @@ pub enum Op {
         #[serde(default)]
         machine: Option<MachineId>,
     },
+    RestorePath {
+        path: String,
+        #[serde(default)]
+        machine: Option<MachineId>,
+    },
     UploadPaths {
         sources: Vec<String>,
         to: String,

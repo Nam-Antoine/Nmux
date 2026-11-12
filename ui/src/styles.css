@@ -1299,6 +1299,9 @@ form .host-note {
   max-width: 70vw;
   user-select: text;
 }
+.toast .btn {
+  margin-left: 12px;
+}
 .offline {
   top: 14px;
 }

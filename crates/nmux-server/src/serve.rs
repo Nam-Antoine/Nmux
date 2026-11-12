@@ -149,6 +149,7 @@ fn may_wait(op: &Op) -> bool {
             | Op::MakeFile { .. }
             | Op::RenamePath { .. }
             | Op::RemovePath { .. }
+            | Op::RestorePath { .. }
             | Op::UploadPaths { .. }
             | Op::DownloadPath { .. }
             | Op::CheckPath { .. }

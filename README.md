@@ -19,8 +19,9 @@ for every agent (needs you, working, done, idle).
   `Delete` deletes the focused row. Upload picks files or folders, or drop
   them onto a folder in the tree; if names are taken it lists them and asks
   before going on (folders are merged, same-named files replaced).
-  Delete goes to the Recycle Bin on this computer. The workspace folder itself
-  cannot be renamed or deleted.
+  Delete goes to the Recycle Bin on this computer, and the message that
+  follows has an Undo button. The workspace folder itself cannot be renamed or
+  deleted.
 - Ports panel: ports your panes listen on (open in the browser), and SSH port
   forwards (`ssh -L`) to other machines.
 - Changes panel: git branch, changed files with line counts, and diffs.
@@ -37,7 +38,8 @@ for every agent (needs you, working, done, idle).
   `Enter` to complete. Files on a machine has the same actions, plus Download,
   which saves a file or folder into this computer's Downloads folder. Uploads
   and downloads go through your `ssh` and need `tar` on the machine. Delete on
-  a machine is permanent.
+  a machine moves the item to `~/.nmux-trash` there, where Undo finds it; items
+  older than 7 days are cleared the next time something is deleted.
 - Run `claude` in a shell pane and it is shown and tracked as a Claude Code
   pane until Claude exits. If Nmux closes first, the pane resumes that
   conversation.

@@ -230,6 +230,16 @@ impl Hub {
                 }
                 Reply::Done
             }
+            Op::RestorePath { path, machine } => {
+                match machine {
+                    Some(machine) => {
+                        let (target, path) = far(machine, &path)?;
+                        remote::restore(&target, &path, env)?
+                    }
+                    None => files::restore(&path, &self.workspace_roots())?,
+                }
+                Reply::Done
+            }
             Op::UploadPaths { sources, to, overwrite, machine } => {
                 match machine {
                     Some(machine) => {
@@ -351,6 +361,7 @@ impl Hub {
             | Op::MakeFile { .. }
             | Op::RenamePath { .. }
             | Op::RemovePath { .. }
+            | Op::RestorePath { .. }
             | Op::UploadPaths { .. }
             | Op::DownloadPath { .. }
             | Op::CheckPath { .. }
