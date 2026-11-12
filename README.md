@@ -18,9 +18,10 @@ for every agent (needs you, working, done, idle).
   new file, new folder, rename, delete, copy path and upload; `F2` renames and
   `Delete` deletes the focused row. Upload picks files or folders, or drop
   them onto a folder in the tree; if names are taken it lists them and asks
-  before going on (folders are merged, same-named files replaced).
-  Delete goes to the Recycle Bin on this computer, and the message that
-  follows has an Undo button. The workspace folder itself cannot be renamed or
+  before replacing them.
+  Delete goes to the Recycle Bin on this computer. Every action is followed
+  by a message with an Undo button: new, rename, delete, upload (what an
+  upload replaced comes back too) and download. The workspace folder itself cannot be renamed or
   deleted.
 - Ports panel: ports your panes listen on (open in the browser), and SSH port
   forwards (`ssh -L`) to other machines.

@@ -104,6 +104,9 @@ pub enum Op {
         #[serde(default)]
         machine: Option<MachineId>,
     },
+    DiscardDownload {
+        path: String,
+    },
     UploadPaths {
         sources: Vec<String>,
         to: String,

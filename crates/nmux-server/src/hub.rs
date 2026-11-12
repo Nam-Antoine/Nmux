@@ -240,6 +240,10 @@ impl Hub {
                 }
                 Reply::Done
             }
+            Op::DiscardDownload { path } => {
+                files::discard_download(&path, &self.downloads()?)?;
+                Reply::Done
+            }
             Op::UploadPaths { sources, to, overwrite, machine } => {
                 match machine {
                     Some(machine) => {
@@ -362,6 +366,7 @@ impl Hub {
             | Op::RenamePath { .. }
             | Op::RemovePath { .. }
             | Op::RestorePath { .. }
+            | Op::DiscardDownload { .. }
             | Op::UploadPaths { .. }
             | Op::DownloadPath { .. }
             | Op::CheckPath { .. }

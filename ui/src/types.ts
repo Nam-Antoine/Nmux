@@ -117,6 +117,7 @@ export type Op =
   | { op: 'renamePath'; from: string; to: string; machine?: MachineId }
   | { op: 'removePath'; path: string; machine?: MachineId }
   | { op: 'restorePath'; path: string; machine?: MachineId }
+  | { op: 'discardDownload'; path: string }
   | { op: 'uploadPaths'; sources: string[]; to: string; overwrite: boolean; machine?: MachineId }
   | { op: 'downloadPath'; path: string; machine: MachineId }
   | { op: 'pasteImage'; pane: PaneId; extension: string; data: string }

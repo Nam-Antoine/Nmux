@@ -228,23 +228,50 @@ export function Files(): React.JSX.Element {
     return work.finally(() => setBusy((b) => (b === note ? null : b)))
   }
 
+  const undoable = (message: string, back: () => Promise<unknown>): void =>
+    toast(message, { label: 'Undo', run: () => void during('Undoing…', back()).then((ok) => ok && toast('Undone.')) })
+
+  const discard = async (dir: string, name: string): Promise<unknown> => {
+    const aside = join(dir, `.nmux-undone-${Date.now()}-${name}`)
+    const gone = (await run({ op: 'renamePath', from: join(dir, name), to: aside, machine })) && (await run({ op: 'removePath', path: aside, machine }))
+    forget(join(dir, name))
+    refresh(dir)
+    return gone
+  }
+
   const upload = (sources: string[], to: string): void => {
     if (sources.length === 0) return
-    const what = sources.length === 1 ? tail(sources[0]!) : `${sources.length} items`
+    const names = sources.map(tail)
+    const what = names.length === 1 ? names[0]! : `${names.length} items`
     const send = (overwrite: boolean): Promise<unknown> => call({ op: 'uploadPaths', sources, to, overwrite, machine })
+    let replaced: string[] = []
     const work = send(false).catch(async (err) => {
       if (!String(err).includes('already exists')) throw err
-      const ask = `In ${to}, ${String(err)}\n\nUpload anyway? Folders are merged, and files with the same name are replaced.`
-      return (await sure(ask)) ? send(true) : null
+      const reply = await call({ op: 'listDir', path: to, machine })
+      const fold = (name: string): string => (machine === undefined ? name.toLowerCase() : name)
+      const taken = reply.kind === 'dir' ? reply.entries.map((e) => e.name).filter((name) => names.some((n) => fold(n) === fold(name))) : []
+      if (!(await sure(`In ${to}, already exists: ${taken.join(', ')}\n\nReplace? What is there now can be put back with Undo.`))) return null
+      for (const name of taken) await call({ op: 'removePath', path: join(to, name), machine })
+      replaced = taken
+      return send(true)
     })
     during(`Uploading ${what} to ${to}…`, work)
       .then((done) => {
         if (!done) return
-        toast(`Uploaded ${what} to ${to}.`)
         expand(to)
         refresh(to)
+        undoable(`Uploaded ${what} to ${to}.`, async () => {
+          let ok = true
+          for (const name of names) ok = !!(await discard(to, name)) && ok
+          for (const name of replaced) ok = !!(await run({ op: 'restorePath', path: join(to, name), machine })) && ok
+          refresh(to)
+          return ok
+        })
       })
-      .catch((err) => toast(String(err)))
+      .catch((err) => {
+        refresh(to)
+        toast(String(err))
+      })
   }
 
   useEffect(() => {
@@ -294,13 +321,24 @@ export function Files(): React.JSX.Element {
     if ('rename' in was) {
       const { path, parent } = was.rename
       if (name === was.rename.name) return
-      void run({ op: 'renamePath', from: path, to: join(parent, name), machine }).then((ok) => {
+      const moved = join(parent, name)
+      void run({ op: 'renamePath', from: path, to: moved, machine }).then((ok) => {
         if (!ok) return
         forget(path)
         refresh(parent)
+        undoable(`Renamed "${was.rename.name}" to "${name}".`, async () => {
+          const back = await run({ op: 'renamePath', from: moved, to: path, machine })
+          forget(moved)
+          refresh(parent)
+          return back
+        })
       })
     } else {
-      void run({ op: was.folder ? 'makeDir' : 'makeFile', path: join(was.dir, name), machine }).then((ok) => ok && refresh(was.dir))
+      void run({ op: was.folder ? 'makeDir' : 'makeFile', path: join(was.dir, name), machine }).then((ok) => {
+        if (!ok) return
+        refresh(was.dir)
+        undoable(`Created "${name}".`, () => discard(was.dir, name))
+      })
     }
   }
 
@@ -315,14 +353,19 @@ export function Files(): React.JSX.Element {
         if (!ok) return
         forget(target.path)
         refresh(target.parent)
-        const undo = (): void => void run({ op: 'restorePath', path: target.path, machine }).then((back) => back && refresh(target.parent))
-        toast(`Deleted "${target.name}".`, { label: 'Undo', run: undo })
+        undoable(`Deleted "${target.name}".`, async () => {
+          const back = await run({ op: 'restorePath', path: target.path, machine })
+          refresh(target.parent)
+          return back
+        })
       })
   }
 
   const download = (path: string): void => {
     if (machine === undefined) return
-    void during(`Downloading ${tail(path)}…`, run({ op: 'downloadPath', path, machine })).then((reply) => reply?.kind === 'path' && toast(`Saved to ${reply.path}`))
+    void during(`Downloading ${tail(path)}…`, run({ op: 'downloadPath', path, machine })).then((reply) => {
+      if (reply?.kind === 'path') undoable(`Saved to ${reply.path}`, () => run({ op: 'discardDownload', path: reply.path }))
+    })
   }
 
   const tree: Tree = {

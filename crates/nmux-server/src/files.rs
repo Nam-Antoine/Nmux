@@ -130,6 +130,15 @@ pub fn restore(path: &str, roots: &[String]) -> Result<(), String> {
     trash::os_limited::restore_all([item]).map_err(|e| e.to_string())
 }
 
+pub fn discard_download(path: &str, downloads: &Path) -> Result<(), String> {
+    let file = Path::new(path);
+    let folder = file.parent().and_then(|parent| std::fs::canonicalize(parent).ok());
+    if folder.is_none() || folder != std::fs::canonicalize(downloads).ok() || file.symlink_metadata().is_err() {
+        return Err("that is not a download".into());
+    }
+    trash::delete(file).map_err(|e| e.to_string())
+}
+
 pub fn upload_names(sources: &[String]) -> Result<Vec<(PathBuf, String)>, String> {
     let mut found: Vec<(PathBuf, String)> = Vec::new();
     for source in sources {
@@ -445,6 +454,22 @@ mod tests {
         assert_eq!(downloads(&env(&[("HOME", "/d/home"), ("UserProfile", "/c/me")])), Some(PathBuf::from("/c/me").join("Downloads")));
         assert_eq!(downloads(&env(&[("HOME", "/home/me")])), Some(PathBuf::from("/home/me").join("Downloads")));
         assert_eq!(downloads(&env(&[("PATH", "x")])), None);
+    }
+
+    #[test]
+    fn only_something_in_downloads_can_be_discarded_as_a_download() {
+        let dir = tempfile::tempdir().unwrap();
+        let downloads = dir.path().join("Downloads");
+        std::fs::create_dir_all(downloads.join("deep")).unwrap();
+        std::fs::write(downloads.join("got.txt"), "").unwrap();
+        std::fs::write(downloads.join("deep/inner.txt"), "").unwrap();
+        std::fs::write(dir.path().join("other.txt"), "").unwrap();
+        let at = |path: PathBuf| path.to_string_lossy().into_owned();
+        for not in [at(dir.path().join("other.txt")), at(downloads.join("deep/inner.txt")), at(downloads.join("missing.txt")), at(downloads.join("../other.txt")), at(downloads.clone())] {
+            assert!(discard_download(&not, &downloads).is_err(), "{not}");
+        }
+        discard_download(&at(downloads.join("got.txt")), &downloads).unwrap();
+        assert!(!downloads.join("got.txt").exists() && dir.path().join("other.txt").exists());
     }
 
     #[test]
