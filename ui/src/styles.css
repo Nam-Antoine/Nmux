@@ -906,34 +906,11 @@ textarea {
   border-bottom: 1px solid var(--pane-line);
   flex: none;
   position: relative;
-}
-.pane-grip {
-  position: absolute;
-  top: 0;
-  left: 50%;
-  width: 56px;
-  height: 11px;
-  margin-left: -28px;
   cursor: grab;
-  opacity: 0;
-  transition: opacity var(--t-fast) ease-out;
+  user-select: none;
 }
-.pane-grip::after {
-  content: '';
-  position: absolute;
-  inset: 3px 8px 4px;
-  border-radius: 2px;
-  background: var(--fg-3);
-}
-.pane-head:hover .pane-grip,
-.pane-grip.moving {
-  opacity: 1;
-}
-.pane-grip.moving {
+.pane-head.moving {
   cursor: grabbing;
-}
-.pane-grip.moving::after {
-  background: var(--focus);
 }
 .pane-drop {
   position: fixed;
@@ -983,6 +960,16 @@ textarea {
 .terminal-host {
   width: 100%;
   height: 100%;
+}
+.terminal-host.scrolls .xterm .xterm-scrollable-element > .scrollbar.vertical {
+  opacity: 1;
+  pointer-events: auto;
+  transition: none;
+}
+.terminal-host.scrolls .xterm .xterm-scrollable-element > .scrollbar.vertical > .slider {
+  border: 3px solid transparent;
+  border-radius: 7px;
+  background-clip: padding-box;
 }
 .pane:not(.focused) .pane-term {
   opacity: 0.82;

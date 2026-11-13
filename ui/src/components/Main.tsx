@@ -2,7 +2,7 @@ import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { appWindow, openCloudUrl, sure } from '../api'
 import { activeTab, activeWorkspace, leaves, paneAddress, rollup, run, tabLabel, togglePanel, update, useStore } from '../store'
 import { terminals } from '../terminals'
-import type { LayoutNode, Pane, PaneId, Side, Tab, Workspace } from '../types'
+import type { LayoutNode, Op, Pane, PaneId, Side, Tab, Workspace } from '../types'
 import { BranchIcon, Close, FilesIcon, FolderIcon, KIND_LABEL, KindIcon, Monitor, Play, Plus, ServerIcon, PortsIcon, SidebarIcon, shownKind, SplitDown, SplitRight, StateDot, WinClose, WinMax, WinMin, Zoom } from './icons'
 import { ContextMenu } from './ContextMenu'
 import { InlineEdit } from './InlineEdit'
@@ -84,6 +84,7 @@ function TabBar({ ws, current }: { ws: Workspace; current: Tab }): React.JSX.Ele
           <div
             key={tab.id}
             className={`tab${tab.id === current.id ? ' active' : ''}`}
+            data-focused={tab.focused}
             onClick={() => void run({ op: 'selectTab', tab: tab.id })}
             onDoubleClick={() => setRenaming(tab.id)}
             onAuxClick={(e) => e.button === 1 && closeTab(tab)}
@@ -204,19 +205,27 @@ function ExitedOverlay({ pane }: { pane: Pane }): React.JSX.Element {
 }
 
 interface Drop {
-  target: PaneId
-  side: Side | 'center'
+  op: Op
   box: { left: number; top: number; width: number; height: number }
 }
 
-function dropAt(x: number, y: number, moving: PaneId): Drop | null {
-  const el = document
-    .elementsFromPoint(x, y)
-    .map((e) => e.closest<HTMLElement>('.pane[data-pane]'))
-    .find(Boolean)
+function dropAt(x: number, y: number, moving: PaneId, solo: boolean): Drop | null {
+  const under = document.elementsFromPoint(x, y)
+  const whole = (el: Element): Drop['box'] => {
+    const r = el.getBoundingClientRect()
+    return { left: r.left, top: r.top, width: r.width, height: r.height }
+  }
+  const tab = under.map((e) => e.closest<HTMLElement>('.tab[data-focused]')).find(Boolean)
+  if (tab) {
+    if (tab.classList.contains('active')) return null
+    return { op: { op: 'movePane', pane: moving, target: Number(tab.dataset.focused), side: 'right' }, box: whole(tab) }
+  }
+  const bar = under.find((e) => e.classList.contains('tabbar'))
+  if (bar) return solo ? null : { op: { op: 'breakPane', pane: moving }, box: whole(bar.querySelector('.tab-add') ?? bar) }
+  const el = under.map((e) => e.closest<HTMLElement>('.pane[data-pane]')).find(Boolean)
   const target = Number(el?.dataset.pane)
   if (!el || target === moving) return null
-  const r = el.getBoundingClientRect()
+  const r = whole(el)
   const fx = (x - r.left) / r.width
   const fy = (y - r.top) / r.height
   const edges: Array<[number, Side]> = [
@@ -226,11 +235,10 @@ function dropAt(x: number, y: number, moving: PaneId): Drop | null {
     [1 - fy, 'down']
   ]
   const [distance, side] = edges.reduce((near, edge) => (edge[0] < near[0] ? edge : near))
-  if (distance > 0.25) return { target, side: 'center', box: { left: r.left, top: r.top, width: r.width, height: r.height } }
+  if (distance > 0.25) return { op: { op: 'swapPanes', a: moving, b: target }, box: r }
   const across = side === 'left' || side === 'right'
   return {
-    target,
-    side,
+    op: { op: 'movePane', pane: moving, target, side },
     box: {
       left: side === 'right' ? r.left + r.width / 2 : r.left,
       top: side === 'down' ? r.top + r.height / 2 : r.top,
@@ -240,10 +248,14 @@ function dropAt(x: number, y: number, moving: PaneId): Drop | null {
   }
 }
 
-function Grip({ pane }: { pane: PaneId }): React.JSX.Element {
+const MOVE_AFTER_PX = 6
+
+function useMove(pane: PaneId, solo: boolean): { moving: boolean; drop: Drop | null; handlers: React.HTMLAttributes<HTMLDivElement> } {
+  const [from, setFrom] = useState<{ x: number; y: number } | null>(null)
   const [moving, setMoving] = useState(false)
   const [drop, setDrop] = useState<Drop | null>(null)
   const stop = (): void => {
+    setFrom(null)
     setMoving(false)
     setDrop(null)
   }
@@ -260,27 +272,27 @@ function Grip({ pane }: { pane: PaneId }): React.JSX.Element {
     return () => window.removeEventListener('keydown', onKey, true)
   }, [moving])
 
-  return (
-    <>
-      <div
-        className={`pane-grip${moving ? ' moving' : ''}`}
-        title="Drag onto another pane: the middle swaps them, an edge places this pane beside it"
-        onPointerDown={(e) => {
-          e.currentTarget.setPointerCapture(e.pointerId)
-          setMoving(true)
-        }}
-        onPointerMove={(e) => moving && setDrop(dropAt(e.clientX, e.clientY, pane))}
-        onPointerCancel={stop}
-        onPointerUp={() => {
-          if (moving && drop) {
-            void run(drop.side === 'center' ? { op: 'swapPanes', a: pane, b: drop.target } : { op: 'movePane', pane, target: drop.target, side: drop.side })
-          }
-          stop()
-        }}
-      />
-      {drop && <div className="pane-drop" style={drop.box} />}
-    </>
-  )
+  return {
+    moving,
+    drop,
+    handlers: {
+      onPointerDown: (e) => {
+        if (e.button !== 0 || (e.target as Element).closest('button, .menu')) return
+        e.currentTarget.setPointerCapture(e.pointerId)
+        setFrom({ x: e.clientX, y: e.clientY })
+      },
+      onPointerMove: (e) => {
+        if (!from || (!moving && Math.hypot(e.clientX - from.x, e.clientY - from.y) < MOVE_AFTER_PX)) return
+        setMoving(true)
+        setDrop(dropAt(e.clientX, e.clientY, pane, solo))
+      },
+      onPointerCancel: stop,
+      onPointerUp: () => {
+        if (moving && drop) void run(drop.op)
+        stop()
+      }
+    }
+  }
 }
 
 function PaneView({ id, focused, solo }: { id: PaneId; focused: boolean; solo: boolean }): React.JSX.Element | null {
@@ -289,6 +301,7 @@ function PaneView({ id, focused, solo }: { id: PaneId; focused: boolean; solo: b
   const address = useStore((s) => paneAddress(s, id))
   const hostRef = useRef<HTMLDivElement>(null)
   const [menu, setMenu] = useState<{ x: number; y: number } | null>(null)
+  const move = useMove(id, solo)
 
   useLayoutEffect(() => {
     const host = hostRef.current
@@ -324,13 +337,15 @@ function PaneView({ id, focused, solo }: { id: PaneId; focused: boolean; solo: b
       }}
     >
       <div
-        className="pane-head"
+        className={`pane-head${move.moving ? ' moving' : ''}`}
+        title="Drag onto another pane or a tab to move this pane"
         onContextMenu={(e) => {
           e.preventDefault()
           setMenu({ x: e.clientX, y: e.clientY })
         }}
+        {...(zoomed ? {} : move.handlers)}
       >
-        {!solo && !zoomed && <Grip pane={id} />}
+        {move.drop && <div className="pane-drop" style={move.drop.box} />}
         {menu && (
           <ContextMenu at={menu} onClose={() => setMenu(null)}>
             <button onClick={() => split('right')}>
