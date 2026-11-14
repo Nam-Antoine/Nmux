@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import { call, pickFolder } from '../api'
 import { BINDINGS } from '../keys'
 import { join, tidy, up } from '../paths'
-import { run, update, useStore } from '../store'
+import { run, trustMachine, update, useStore } from '../store'
 import type { DirEntry, Machine, PaneKind, PaneSpec, SshHost } from '../types'
 import { Check, FolderIcon, KIND_LABEL, KindIcon, ServerIcon, Up } from './icons'
 import { PathInput } from './PathInput'
@@ -92,7 +92,7 @@ function MachineFolder({ machine, cwd, setCwd }: { machine: Machine; cwd: string
 function NewPane({ workspace, initialKind, machine }: { workspace?: number; initialKind: PaneKind; machine?: Machine }): React.JSX.Element {
   const [cwd, setCwd] = useState('')
   const [kind, setKind] = useState<PaneKind>(initialKind)
-  const [skip, setSkip] = useState(false)
+  const [skip, setSkip] = useState(useStore((s) => s.state.settings.skipPermissions))
   const [task, setTask] = useState('')
   const [args, setArgs] = useState('')
   const [busy, setBusy] = useState(false)
@@ -367,6 +367,64 @@ function Help(): React.JSX.Element {
   )
 }
 
+function Settings(): React.JSX.Element {
+  const settings = useStore((s) => s.state.settings)
+  const machines = useStore((s) => s.state.machines)
+  const set = (patch: Partial<typeof settings>): void => void run({ op: 'setSettings', settings: { ...settings, ...patch } })
+  return (
+    <div className="dialog">
+      <h2>Settings</h2>
+      <div className="field">
+        <span>Text size in panes</span>
+        <div className="row">
+          <button className="btn" disabled={settings.textSize <= 10} onClick={() => set({ textSize: settings.textSize - 1 })}>
+            −
+          </button>
+          <span className="text-size">{settings.textSize}</span>
+          <button className="btn" disabled={settings.textSize >= 24} onClick={() => set({ textSize: settings.textSize + 1 })}>
+            +
+          </button>
+          {settings.textSize !== 14 && (
+            <button className="btn" onClick={() => set({ textSize: 14 })}>
+              Back to 14
+            </button>
+          )}
+        </div>
+      </div>
+      <label className="check">
+        <input type="checkbox" checked={settings.notify} onChange={(e) => set({ notify: e.target.checked })} />
+        <span>
+          Notify me when an agent finishes or needs an answer <span className="muted">(only while Nmux is in the background)</span>
+        </span>
+      </label>
+      <label className="check">
+        <input type="checkbox" checked={settings.skipPermissions} onChange={(e) => set({ skipPermissions: e.target.checked })} />
+        <span>
+          Tick "Skip permission" by default for new Claude panes <span className="muted">(--dangerously-skip-permissions)</span>
+        </span>
+      </label>
+      {machines.length > 0 && (
+        <div className="field">
+          <span>Machines whose nc may reach every pane, not only their own</span>
+          {machines.map((machine) => (
+            <label className="check" key={machine.id}>
+              <input type="checkbox" checked={machine.trusted} onChange={() => void trustMachine(machine)} />
+              <span>
+                {machine.label} <span className="muted">({machine.target})</span>
+              </span>
+            </label>
+          ))}
+        </div>
+      )}
+      <div className="row end">
+        <button className="btn primary" onClick={() => update({ dialog: null })}>
+          Close
+        </button>
+      </div>
+    </div>
+  )
+}
+
 export function Dialogs(): React.JSX.Element | null {
   const dialog = useStore((s) => s.dialog)
   const machines = useStore((s) => s.state.machines)
@@ -383,6 +441,8 @@ export function Dialogs(): React.JSX.Element | null {
     <div className="backdrop" onMouseDown={(e) => e.target === e.currentTarget && update({ dialog: null })}>
       {dialog.type === 'help' ? (
         <Help />
+      ) : dialog.type === 'settings' ? (
+        <Settings />
       ) : dialog.type === 'machine' ? (
         <AddMachine />
       ) : dialog.type === 'workspace' ? (

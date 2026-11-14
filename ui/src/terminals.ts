@@ -46,6 +46,7 @@ interface Entry {
 }
 
 const entries = new Map<PaneId, Entry>()
+let textSize = 14
 
 function create(pane: PaneId): Entry {
   const host = document.createElement('div')
@@ -55,7 +56,7 @@ function create(pane: PaneId): Entry {
     cursorBlink: true,
     cursorStyle: 'block',
     fontFamily: '"Geist Mono Variable", "Cascadia Mono", Consolas, "Courier New", monospace',
-    fontSize: 14,
+    fontSize: textSize,
     lineHeight: 1.2,
     scrollback: 5000,
     theme: terminalTheme,
@@ -209,6 +210,15 @@ export const terminals = {
       entry.term.dispose()
       entry.host.remove()
       entries.delete(id)
+    }
+  },
+
+  textSize(size: number): void {
+    if (size === textSize) return
+    textSize = size
+    for (const [id, entry] of entries) {
+      entry.term.options.fontSize = size
+      syncSize(id, entry)
     }
   },
 

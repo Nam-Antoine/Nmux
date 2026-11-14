@@ -1,4 +1,4 @@
-use nmux_core::{Closed, Created, Dir, MachineId, PaneId, PaneSpec, Side, State, TabId, WorkspaceId};
+use nmux_core::{Closed, Created, Dir, MachineId, PaneId, PaneSpec, Settings, Side, State, TabId, WorkspaceId};
 use serde::{Deserialize, Serialize};
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 
@@ -34,6 +34,7 @@ pub enum Op {
     AddMachine { label: Option<String>, target: String },
     RenameMachine { machine: MachineId, label: String },
     TrustMachine { machine: MachineId, trusted: bool },
+    SetSettings { settings: Settings },
     RemoveMachine { machine: MachineId },
     CheckMachine { machine: MachineId },
     ListSshHosts,

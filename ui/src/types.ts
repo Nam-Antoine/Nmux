@@ -26,6 +26,12 @@ export interface Machine {
   trusted: boolean
 }
 
+export interface Settings {
+  textSize: number
+  notify: boolean
+  skipPermissions: boolean
+}
+
 export interface Pane {
   id: PaneId
   kind: PaneKind
@@ -69,6 +75,7 @@ export interface State {
   panes: Pane[]
   activeWorkspace?: WorkspaceId
   machines: Machine[]
+  settings: Settings
 }
 
 export interface PaneSpec {
@@ -86,6 +93,7 @@ export type Op =
   | { op: 'addMachine'; label?: string; target: string }
   | { op: 'renameMachine'; machine: MachineId; label: string }
   | { op: 'trustMachine'; machine: MachineId; trusted: boolean }
+  | { op: 'setSettings'; settings: Settings }
   | { op: 'removeMachine'; machine: MachineId }
   | { op: 'checkMachine'; machine: MachineId }
   | { op: 'listSshHosts' }

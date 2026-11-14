@@ -226,6 +226,20 @@ impl Workspace {
     }
 }
 
+#[derive(Clone, PartialEq, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", default)]
+pub struct Settings {
+    pub text_size: u8,
+    pub notify: bool,
+    pub skip_permissions: bool,
+}
+
+impl Default for Settings {
+    fn default() -> Settings {
+        Settings { text_size: 14, notify: true, skip_permissions: false }
+    }
+}
+
 #[derive(Clone, PartialEq, Debug, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct State {
@@ -236,6 +250,8 @@ pub struct State {
     pub active_workspace: Option<WorkspaceId>,
     #[serde(default)]
     pub machines: Vec<Machine>,
+    #[serde(default)]
+    pub settings: Settings,
     #[serde(default)]
     pub next_id: u32,
 }
@@ -731,6 +747,14 @@ impl State {
 
     pub fn trust_machine(&mut self, id: MachineId, trusted: bool) -> Res<()> {
         self.machines.iter_mut().find(|m| m.id == id).ok_or(ModelError::Invalid("no such machine"))?.trusted = trusted;
+        Ok(())
+    }
+
+    pub fn set_settings(&mut self, settings: Settings) -> Res<()> {
+        if !(10..=24).contains(&settings.text_size) {
+            return Err(ModelError::Invalid("text size goes from 10 to 24"));
+        }
+        self.settings = settings;
         Ok(())
     }
 

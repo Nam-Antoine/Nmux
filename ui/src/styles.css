@@ -1132,6 +1132,12 @@ textarea {
 .dialog .row input {
   flex: 1;
 }
+.text-size {
+  min-width: 28px;
+  text-align: center;
+  color: var(--fg);
+  font-variant-numeric: tabular-nums;
+}
 .dialog .grow {
   flex: 1;
 }

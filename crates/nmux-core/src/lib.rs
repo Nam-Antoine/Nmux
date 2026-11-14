@@ -7,5 +7,5 @@ pub use layout::{Dir, Node, PaneId, Rect, Side};
 pub use model::{
     ssh_failed,
     AgentState, Closed, Created, Detected, Machine, MachineId, MachineStatus, ModelError, Pane, PaneKind, PaneSpec,
-    PaneStatus, ShellClaude, State, Tab, TabId, Workspace, WorkspaceId,
+    PaneStatus, Settings, ShellClaude, State, Tab, TabId, Workspace, WorkspaceId,
 };

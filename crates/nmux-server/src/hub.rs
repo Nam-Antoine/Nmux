@@ -430,6 +430,7 @@ impl Hub {
                 self.done(inner, |s| s.rename_machine(machine, label))
             }
             Op::TrustMachine { machine, trusted } => self.done(inner, |s| s.trust_machine(machine, trusted)),
+            Op::SetSettings { settings } => self.done(inner, |s| s.set_settings(settings)),
             Op::RemoveMachine { machine } => self.done(inner, |s| s.remove_machine(machine)),
             Op::CreateTab { workspace, name, pane } => {
                 let name = name.as_deref().filter(|n| !n.trim().is_empty()).map(validate::name).transpose().map_err(|r| r.0)?;

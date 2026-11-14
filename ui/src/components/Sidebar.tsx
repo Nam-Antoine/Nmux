@@ -1,8 +1,8 @@
 import { useState } from 'react'
 import { sure } from '../api'
-import { rollup, run, update, useStore, workspacePanes } from '../store'
+import { rollup, run, trustMachine, update, useStore, workspacePanes } from '../store'
 import type { AgentState, Machine, Pane, Workspace } from '../types'
-import { Avatar, Chevron, Clock, Close, FilesIcon, Keyboard, Pencil, PortsIcon, KindIcon, Monitor, Play, Plus, Search, ServerIcon, SidebarIcon, shownKind, StateDot } from './icons'
+import { Avatar, Chevron, Clock, Close, FilesIcon, Keyboard, Pencil, PortsIcon, KindIcon, Monitor, Play, Plus, Search, ServerIcon, SidebarIcon, shownKind, Sliders, StateDot } from './icons'
 import { ContextMenu } from './ContextMenu'
 import { InlineEdit } from './InlineEdit'
 
@@ -129,14 +129,6 @@ function MachineGroup({ machine, spaces, activeId, running }: { machine?: Machin
     void sure(`Remove "${machine.label}"? Nothing is stopped on the machine.`).then((yes) => (yes ? run({ op: 'removeMachine', machine: machine.id }) : null))
   }
 
-  const trust = (): void => {
-    if (!machine) return
-    const set = (trusted: boolean): Promise<unknown> => run({ op: 'trustMachine', machine: machine.id, trusted })
-    if (machine.trusted) return void set(false)
-    const warn = `Let nc on "${machine.label}" reach every pane? Anyone who can use that account can then read and type into the panes on this computer.`
-    void sure(warn).then((yes) => (yes ? set(true) : null))
-  }
-
   return (
     <>
       <div
@@ -158,7 +150,7 @@ function MachineGroup({ machine, spaces, activeId, running }: { machine?: Machin
             <button onClick={() => setRenaming(true)}>
               <Pencil /> Rename
             </button>
-            <button onClick={trust}>
+            <button onClick={() => machine && void trustMachine(machine)}>
               <Keyboard /> {machine?.trusted ? 'Keep its nc to its own panes' : 'Let its nc reach every pane'}
             </button>
             <button className="danger" onClick={remove}>
@@ -388,6 +380,9 @@ export function Sidebar(): React.JSX.Element {
       <div className="side-foot">
         <button className="foot-row" onClick={() => update({ dialog: { type: 'help' } })}>
           <Keyboard /> Shortcuts
+        </button>
+        <button className="foot-row" onClick={() => update({ dialog: { type: 'settings' } })}>
+          <Sliders /> Settings
         </button>
         <button className="foot-row dim" onClick={() => update({ dialog: { type: 'machine' } })}>
           <Plus /> Add machine

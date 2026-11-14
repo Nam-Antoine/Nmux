@@ -26,6 +26,9 @@ export const Zoom = () => (
 export const Chevron = ({ open }: { open: boolean }) => (
   <svg {...base} style={{ transform: open ? 'rotate(90deg)' : undefined, transition: 'transform var(--t-med) var(--ease-out)' }}><path d="M6 4l4 4-4 4" /></svg>
 )
+export const Sliders = () => (
+  <svg {...base}><path d="M2.5 5h5.5M12 5h1.5M2.5 11h1.5M8 11h5.5" /><circle cx="10" cy="5" r="1.8" /><circle cx="6" cy="11" r="1.8" /></svg>
+)
 export const Up = () => (
   <svg {...base}><path d="M8 12.5v-9M4.5 7L8 3.5 11.5 7" /></svg>
 )

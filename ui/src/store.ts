@@ -1,13 +1,14 @@
 import { useSyncExternalStore } from 'react'
-import { call, notify, onConnected, onDisconnected, onFileDrop, onServerEvent } from './api'
+import { call, notify, onConnected, onDisconnected, onFileDrop, onServerEvent, sure } from './api'
 import { terminals } from './terminals'
-import type { AgentState, Forward, Pane, PaneId, PaneKind, State, Tab, Workspace } from './types'
+import type { AgentState, Forward, Machine, Pane, PaneId, PaneKind, State, Tab, Workspace } from './types'
 
 export type Dialog =
   | { type: 'workspace'; machine?: number }
   | { type: 'machine' }
   | { type: 'tab'; workspace: number; kind: PaneKind }
   | { type: 'help' }
+  | { type: 'settings' }
   | null
 
 export interface ToastAction {
@@ -36,7 +37,7 @@ export interface Store {
 }
 
 let store: Store = {
-  state: { workspaces: [], panes: [], machines: [] },
+  state: { workspaces: [], panes: [], machines: [], settings: { textSize: 14, notify: true, skipPermissions: false } },
   panes: new Map(),
   connected: false,
   problem: null,
@@ -74,6 +75,7 @@ function setState(state: State): void {
   state.machines ??= []
   const panes = new Map(state.panes.map((p) => [p.id, p]))
   terminals.retain(panes)
+  terminals.textSize(state.settings.textSize)
   update({ state, panes })
 }
 
@@ -113,6 +115,11 @@ export async function run(op: Parameters<typeof call>[0]): Promise<Awaited<Retur
   }
 }
 
+export async function trustMachine(machine: Machine): Promise<void> {
+  const warn = `Let nc on "${machine.label}" reach every pane? Anyone who can use that account can then read and type into the panes on this computer.`
+  if (machine.trusted || (await sure(warn))) await run({ op: 'trustMachine', machine: machine.id, trusted: !machine.trusted })
+}
+
 function checkMachines(): void {
   for (const machine of store.state.machines) {
     if (machine.status !== 'checking') void call({ op: 'checkMachine', machine: machine.id }).catch(() => {})
@@ -141,7 +148,7 @@ export async function start(): Promise<void> {
     else if (event.event === 'forwards') update({ forwards: event.forwards })
     else if (event.event === 'attention') {
       const pane = store.panes.get(event.pane)
-      if (pane && (document.hidden || !document.hasFocus())) {
+      if (pane && store.state.settings.notify && (document.hidden || !document.hasFocus())) {
         void notify(event.blocked ? 'Needs your answer' : 'Finished', pane.name)
       }
     }
