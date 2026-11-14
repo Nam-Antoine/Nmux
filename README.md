@@ -31,9 +31,11 @@ for every agent (needs you, working, done, idle).
 - Machines: "Add machine" lists the hosts in your `~/.ssh/config` (or type a
   target), checks that it connects, and you open workspaces on it next to the
   local ones. A remote pane is your own `ssh` in a terminal, so your
-  config, keys and prompts work as usual, and nothing is installed there. With
-  tmux on the machine, panes keep running when the connection drops or Nmux
-  closes; starting the pane again reattaches. Ports, Changes and Files work
+  config, keys and prompts work as usual. With tmux on the machine, panes
+  keep running when the connection drops or Nmux closes. Nmux reconnects by
+  itself: it tries again after a few seconds, then every 30, until the
+  machine answers, and a pane that had lost its connection comes back when
+  Nmux starts. Ports, Changes and Files work
   there too, and Files can go to any folder on the machine. Wherever you type
   a folder on a machine (a new workspace, the Files path bar), Nmux suggests
   the folders that match as you type, at any depth: arrows to choose, `Tab` or

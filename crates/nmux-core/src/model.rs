@@ -23,6 +23,10 @@ pub enum MachineStatus {
     Error,
 }
 
+pub fn ssh_failed(code: i32) -> bool {
+    code == 255 || code == -1
+}
+
 #[derive(Clone, PartialEq, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Machine {
@@ -826,7 +830,8 @@ impl State {
         self.panes.retain(|id, _| placed.contains(id));
         let mut were_running = Vec::new();
         for p in self.panes.values_mut() {
-            if p.status == PaneStatus::Running && p.kind != PaneKind::Cloud {
+            let lost = p.machine.is_some() && p.exit_code.is_some_and(ssh_failed);
+            if (p.status == PaneStatus::Running || lost) && p.kind != PaneKind::Cloud {
                 were_running.push(p.id);
             }
             p.status = PaneStatus::Exited;

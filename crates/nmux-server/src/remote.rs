@@ -100,7 +100,7 @@ fn ssh_bin(env: &Env) -> String {
 }
 
 pub fn launch(target: &str, script: &str, forward: Option<&str>, env: &Env) -> Launch {
-    let mut args: Vec<String> = ["-t", "-C", "-o", "ServerAliveInterval=30", "-o", "ServerAliveCountMax=4"].map(String::from).into();
+    let mut args: Vec<String> = ["-t", "-C", "-o", "ServerAliveInterval=15", "-o", "ServerAliveCountMax=3"].map(String::from).into();
     args.extend(forward.into_iter().flat_map(|forward| ["-R".to_string(), forward.to_string()]));
     args.extend(["--".to_string(), target.to_string(), format!("sh -c {}", sh_quote(script))]);
     Launch { file: ssh_bin(env), args }

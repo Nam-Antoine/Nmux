@@ -34,6 +34,15 @@ struct Runtime {
     generation: u64,
     sniffer: Option<CloudIdSniffer>,
     detect_dirty: bool,
+    started: Instant,
+    failures: u32,
+    retry_at: Option<Instant>,
+}
+
+impl Runtime {
+    fn new(generation: u64) -> Runtime {
+        Runtime { screen: Screen::default(), process: None, generation, sniffer: None, detect_dirty: false, started: Instant::now(), failures: 0, retry_at: None }
+    }
 }
 
 struct Inner {
@@ -67,6 +76,8 @@ type Graveyard = Vec<PtyProcess>;
 const CURSOR_QUERY: &str = "\x1b[6n";
 const SAVE_EVERY: Duration = Duration::from_millis(500);
 const SHELL_CHECK_TICKS: u32 = 8;
+const RETRY_SECS: [u64; 5] = [2, 4, 8, 15, 30];
+const SETTLED: Duration = Duration::from_secs(60);
 
 fn remote_sessions(state: &State, owner: &str) -> HashMap<PaneId, (String, String)> {
     state
@@ -442,6 +453,7 @@ impl Hub {
             Op::StopPane { pane } => {
                 let rt = inner.runtimes.get_mut(&pane).ok_or("that pane is not running")?;
                 graveyard.extend(rt.process.take());
+                rt.retry_at = None;
                 inner.state.set_exited(pane, None);
                 self.changed(inner);
                 Ok(Reply::Done)
@@ -552,13 +564,7 @@ impl Hub {
                     return Err("no such pane".into());
                 }
                 let generation = inner.generation;
-                let rt = inner.runtimes.entry(pane).or_insert_with(|| Runtime {
-                    screen: Screen::default(),
-                    process: None,
-                    generation,
-                    sniffer: None,
-                    detect_dirty: false,
-                });
+                let rt = inner.runtimes.entry(pane).or_insert_with(|| Runtime::new(generation));
                 if rt.screen.resize(cols, rows) {
                     if let Some(process) = &rt.process {
                         process.resize(cols, rows);
@@ -748,14 +754,10 @@ impl Hub {
 
         inner.generation += 1;
         let generation = inner.generation;
-        let rt = inner.runtimes.entry(id).or_insert_with(|| Runtime {
-            screen: Screen::default(),
-            process: None,
-            generation,
-            sniffer: None,
-            detect_dirty: false,
-        });
+        let rt = inner.runtimes.entry(id).or_insert_with(|| Runtime::new(generation));
         rt.generation = generation;
+        rt.started = Instant::now();
+        rt.retry_at = None;
         rt.sniffer = (kind == PaneKind::Cloud).then(CloudIdSniffer::default);
         rt.screen.title = None;
         if rt.screen.seq > 0 {
@@ -841,7 +843,19 @@ impl Hub {
                 return;
             }
             let process = rt.process.take();
-            inner.state.set_exited(id, code);
+            let far = inner.state.panes.get(&id).and_then(|pane| inner.state.machine(pane.machine?)).map(|machine| machine.label.clone());
+            match far.filter(|_| code.is_some_and(nmux_core::ssh_failed)) {
+                Some(machine) => {
+                    rt.failures = if rt.started.elapsed() >= SETTLED { 0 } else { rt.failures + 1 };
+                    let wait = RETRY_SECS[(rt.failures as usize).min(RETRY_SECS.len() - 1)];
+                    rt.retry_at = Some(Instant::now() + Duration::from_secs(wait));
+                    self.print(id, rt, &format!("\r\n\x1b[2m[nmux] No connection to {machine}. What runs there keeps running; trying again in {wait} s.\x1b[0m\r\n"));
+                    inner.state.set_running(id);
+                }
+                None => {
+                    inner.state.set_exited(id, code);
+                }
+            }
             self.changed(inner);
             process
         };
@@ -900,11 +914,17 @@ impl Hub {
         }
     }
 
-    pub fn tick(&self) {
+    pub fn tick(self: &Arc<Self>) {
         self.watch_claude();
         let to_save = {
             let mut inner = self.lock();
             let inner = &mut *inner;
+            let now = Instant::now();
+            let due: Vec<PaneId> = inner.runtimes.iter().filter(|(_, rt)| rt.retry_at.is_some_and(|at| at <= now)).map(|(id, _)| *id).collect();
+            for id in due {
+                let resume = inner.state.panes.get(&id).is_some_and(|pane| pane.kind == PaneKind::Claude);
+                self.spawn(inner, id, Start { resume, teleport: None, notice: None });
+            }
             let mut changed = false;
             for (id, rt) in inner.runtimes.iter_mut() {
                 if !std::mem::take(&mut rt.detect_dirty) || rt.process.is_none() {
