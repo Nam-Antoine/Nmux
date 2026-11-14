@@ -15,9 +15,6 @@ const terminalTheme = {
   cursor: '#d7dae0',
   cursorAccent: '#17191d',
   selectionBackground: '#2f3644',
-  scrollbarSliderBackground: 'rgba(215, 218, 224, 0.3)',
-  scrollbarSliderHoverBackground: 'rgba(215, 218, 224, 0.5)',
-  scrollbarSliderActiveBackground: 'rgba(150, 178, 215, 0.8)',
   black: '#1b1f2a',
   red: '#f07178',
   green: '#98c379',
@@ -95,9 +92,6 @@ function create(pane: PaneId): Entry {
     return true
   })
   term.onData((data) => send({ op: 'write', pane, data }))
-  const markScrolls = (): void => void host.classList.toggle('scrolls', term.buffer.active.baseY > 0)
-  term.onWriteParsed(markScrolls)
-  term.buffer.onBufferChange(markScrolls)
   host.addEventListener(
     'paste',
     (ev) => {

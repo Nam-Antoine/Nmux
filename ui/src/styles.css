@@ -955,21 +955,14 @@ textarea {
 }
 .pane-term {
   position: absolute;
-  inset: 11px 5px 6.5px 14.5px;
+  inset: 11px 0 6.5px 14.5px;
 }
 .terminal-host {
   width: 100%;
   height: 100%;
 }
-.terminal-host.scrolls .xterm .xterm-scrollable-element > .scrollbar.vertical {
-  opacity: 1;
-  pointer-events: auto;
-  transition: none;
-}
-.terminal-host.scrolls .xterm .xterm-scrollable-element > .scrollbar.vertical > .slider {
-  border: 3px solid transparent;
-  border-radius: 7px;
-  background-clip: padding-box;
+.terminal-host .xterm .xterm-scrollable-element > .scrollbar {
+  display: none;
 }
 .pane:not(.focused) .pane-term {
   opacity: 0.82;
