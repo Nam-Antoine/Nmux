@@ -1,6 +1,7 @@
 import { useSyncExternalStore } from 'react'
 import { call, notify, onConnected, onDisconnected, onFileDrop, onServerEvent, sure } from './api'
 import { terminals } from './terminals'
+import { dress } from './themes'
 import type { AgentState, Forward, Machine, Pane, PaneId, PaneKind, State, Tab, Workspace } from './types'
 
 export type Dialog =
@@ -37,7 +38,7 @@ export interface Store {
 }
 
 let store: Store = {
-  state: { workspaces: [], panes: [], machines: [], settings: { textSize: 14, notify: true, skipPermissions: false } },
+  state: { workspaces: [], panes: [], machines: [], settings: { textSize: 14, notify: true, skipPermissions: false, theme: 'dark', paneFont: '', appFont: '' } },
   panes: new Map(),
   connected: false,
   problem: null,
@@ -75,7 +76,8 @@ function setState(state: State): void {
   state.machines ??= []
   const panes = new Map(state.panes.map((p) => [p.id, p]))
   terminals.retain(panes)
-  terminals.textSize(state.settings.textSize)
+  dress(state.settings)
+  terminals.look(state.settings)
   update({ state, panes })
 }
 

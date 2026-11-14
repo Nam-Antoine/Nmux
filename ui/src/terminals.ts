@@ -7,31 +7,8 @@ import '@xterm/xterm/css/xterm.css'
 import { call, send } from './api'
 import { handleKey } from './keys'
 import { toast } from './store'
-import type { Pane, PaneId } from './types'
-
-const terminalTheme = {
-  background: '#17191d',
-  foreground: '#d7dae0',
-  cursor: '#d7dae0',
-  cursorAccent: '#17191d',
-  selectionBackground: '#2f3644',
-  black: '#1b1f2a',
-  red: '#f07178',
-  green: '#98c379',
-  yellow: '#e5c07b',
-  blue: '#7aa2f7',
-  magenta: '#c678dd',
-  cyan: '#56b6c2',
-  white: '#c8ccd4',
-  brightBlack: '#5c6370',
-  brightRed: '#ff8a8f',
-  brightGreen: '#b5e890',
-  brightYellow: '#f5d68a',
-  brightBlue: '#9ab8ff',
-  brightMagenta: '#d99cf0',
-  brightCyan: '#7fd8e0',
-  brightWhite: '#ffffff'
-}
+import { paneLook } from './themes'
+import type { Pane, PaneId, Settings } from './types'
 
 interface Entry {
   term: Terminal
@@ -46,7 +23,7 @@ interface Entry {
 }
 
 const entries = new Map<PaneId, Entry>()
-let textSize = 14
+let look: ReturnType<typeof paneLook> | null = null
 
 function create(pane: PaneId): Entry {
   const host = document.createElement('div')
@@ -55,11 +32,9 @@ function create(pane: PaneId): Entry {
     allowProposedApi: true,
     cursorBlink: true,
     cursorStyle: 'block',
-    fontFamily: '"Geist Mono Variable", "Cascadia Mono", Consolas, "Courier New", monospace',
-    fontSize: textSize,
     lineHeight: 1.2,
     scrollback: 5000,
-    theme: terminalTheme,
+    ...look,
     windowsPty: { backend: 'conpty' }
   })
   const fit = new FitAddon()
@@ -213,11 +188,12 @@ export const terminals = {
     }
   },
 
-  textSize(size: number): void {
-    if (size === textSize) return
-    textSize = size
+  look(settings: Settings): void {
+    const next = paneLook(settings)
+    if (look && next.theme === look.theme && next.fontFamily === look.fontFamily && next.fontSize === look.fontSize) return
+    look = next
     for (const [id, entry] of entries) {
-      entry.term.options.fontSize = size
+      Object.assign(entry.term.options, next)
       syncSize(id, entry)
     }
   },

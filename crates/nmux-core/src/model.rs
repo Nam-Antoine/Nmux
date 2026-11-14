@@ -232,11 +232,14 @@ pub struct Settings {
     pub text_size: u8,
     pub notify: bool,
     pub skip_permissions: bool,
+    pub theme: String,
+    pub pane_font: String,
+    pub app_font: String,
 }
 
 impl Default for Settings {
     fn default() -> Settings {
-        Settings { text_size: 14, notify: true, skip_permissions: false }
+        Settings { text_size: 14, notify: true, skip_permissions: false, theme: "dark".into(), pane_font: String::new(), app_font: String::new() }
     }
 }
 
@@ -753,6 +756,9 @@ impl State {
     pub fn set_settings(&mut self, settings: Settings) -> Res<()> {
         if !(10..=24).contains(&settings.text_size) {
             return Err(ModelError::Invalid("text size goes from 10 to 24"));
+        }
+        if [&settings.theme, &settings.pane_font, &settings.app_font].iter().any(|name| name.chars().count() > 64) {
+            return Err(ModelError::Invalid("that name is too long"));
         }
         self.settings = settings;
         Ok(())

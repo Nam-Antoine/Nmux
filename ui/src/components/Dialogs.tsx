@@ -3,6 +3,7 @@ import { call, pickFolder } from '../api'
 import { BINDINGS } from '../keys'
 import { join, tidy, up } from '../paths'
 import { run, trustMachine, update, useStore } from '../store'
+import { APP_FONTS, PANE_FONTS, THEMES, installed } from '../themes'
 import type { DirEntry, Machine, PaneKind, PaneSpec, SshHost } from '../types'
 import { Check, FolderIcon, KIND_LABEL, KindIcon, ServerIcon, Up } from './icons'
 import { PathInput } from './PathInput'
@@ -367,6 +368,23 @@ function Help(): React.JSX.Element {
   )
 }
 
+function FontChoice({ label, builtIn, fonts, value, onChange }: { label: string; builtIn: string; fonts: string[]; value: string; onChange: (font: string) => void }): React.JSX.Element {
+  const [found] = useState(() => installed(fonts))
+  return (
+    <label className="grow">
+      <span>{label}</span>
+      <select value={value} onChange={(e) => onChange(e.target.value)}>
+        <option value="">{builtIn}</option>
+        {[...new Set([...found, value])].filter(Boolean).map((font) => (
+          <option key={font} value={font}>
+            {font}
+          </option>
+        ))}
+      </select>
+    </label>
+  )
+}
+
 function Settings(): React.JSX.Element {
   const settings = useStore((s) => s.state.settings)
   const machines = useStore((s) => s.state.machines)
@@ -374,6 +392,20 @@ function Settings(): React.JSX.Element {
   return (
     <div className="dialog">
       <h2>Settings</h2>
+      <div className="field">
+        <span>Theme</span>
+        <div className="segmented">
+          {THEMES.map((theme) => (
+            <button key={theme.id} className={theme.id === settings.theme ? 'on' : ''} onClick={() => set({ theme: theme.id })}>
+              {theme.label}
+            </button>
+          ))}
+        </div>
+      </div>
+      <div className="row top">
+        <FontChoice label="Font in panes" builtIn="Geist Mono (built in)" fonts={PANE_FONTS} value={settings.paneFont} onChange={(paneFont) => set({ paneFont })} />
+        <FontChoice label="Font in the app" builtIn="Geist (built in)" fonts={APP_FONTS} value={settings.appFont} onChange={(appFont) => set({ appFont })} />
+      </div>
       <div className="field">
         <span>Text size in panes</span>
         <div className="row">

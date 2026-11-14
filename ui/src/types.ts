@@ -30,6 +30,9 @@ export interface Settings {
   textSize: number
   notify: boolean
   skipPermissions: boolean
+  theme: string
+  paneFont: string
+  appFont: string
 }
 
 export interface Pane {
