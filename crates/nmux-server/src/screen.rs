@@ -63,7 +63,9 @@ impl Screen {
     }
 
     pub fn text(&self) -> String {
-        self.parser.screen().contents()
+        let screen = self.parser.screen();
+        screen.rows(0, screen.size().1).map(|row| row.trim_end().to_string()).collect::<Vec<_>>().join("
+")
     }
 
     pub fn snapshot(&mut self) -> String {
@@ -136,6 +138,14 @@ mod tests {
         assert_eq!(s.feed(&bytes[3..]), "✳");
         assert_eq!(s.feed(b"a\xffb"), "a\u{FFFD}b");
         assert_eq!(s.seq, 4);
+    }
+
+    #[test]
+    fn rows_drawn_to_the_full_width_stay_separate_lines() {
+        let mut s = Screen::new(20, 4);
+        s.feed(format!("{:<20}{:<20}{:<20}", "done", "✽ Nucleating… (9m)", "❯").as_bytes());
+        assert_eq!(s.text().lines().collect::<Vec<_>>(), ["done", "✽ Nucleating… (9m)", "❯"]);
+        assert_eq!(nmux_core::detect::classify(None, &s.text()), Some(nmux_core::Detected::Working));
     }
 
     #[test]
