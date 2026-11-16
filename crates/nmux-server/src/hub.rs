@@ -15,6 +15,7 @@ use crate::git;
 use crate::ports::{self, Forwards};
 use crate::launch::{self, ClaudeOptions};
 use crate::persist;
+use crate::power;
 use crate::pty::PtyProcess;
 use crate::relay::Relay;
 use crate::remote;
@@ -53,6 +54,7 @@ struct Inner {
     save_dirty: bool,
     last_save: Instant,
     ticks: u32,
+    awake: bool,
 }
 
 pub struct Hub {
@@ -124,6 +126,7 @@ impl Hub {
                 save_dirty: false,
                 last_save: Instant::now(),
                 ticks: 0,
+                awake: false,
             }),
             events,
             config,
@@ -948,6 +951,15 @@ impl Hub {
             }
             if changed {
                 self.changed(inner);
+            }
+            let awake = match inner.state.settings.awake.as_str() {
+                "never" => false,
+                "always" => inner.state.panes.values().any(|pane| pane.status == PaneStatus::Running),
+                _ => inner.state.panes.values().any(|pane| pane.agent == AgentState::Working),
+            };
+            if awake != inner.awake {
+                inner.awake = awake;
+                power::stay_awake(awake);
             }
             if inner.save_dirty && inner.last_save.elapsed() >= SAVE_EVERY {
                 inner.save_dirty = false;

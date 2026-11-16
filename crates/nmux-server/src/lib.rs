@@ -6,6 +6,7 @@ pub mod hub;
 pub mod launch;
 pub mod persist;
 pub mod ports;
+mod power;
 pub mod pty;
 pub mod relay;
 pub mod remote;

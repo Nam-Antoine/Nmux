@@ -385,6 +385,12 @@ function FontChoice({ label, builtIn, fonts, value, onChange }: { label: string;
   )
 }
 
+const AWAKE = [
+  ['working', 'While an agent works'],
+  ['always', 'While any pane runs'],
+  ['never', 'Never']
+] as const
+
 function Settings(): React.JSX.Element {
   const settings = useStore((s) => s.state.settings)
   const machines = useStore((s) => s.state.machines)
@@ -422,6 +428,17 @@ function Settings(): React.JSX.Element {
             </button>
           )}
         </div>
+      </div>
+      <div className="field">
+        <span>Keep this computer from going to sleep</span>
+        <div className="segmented">
+          {AWAKE.map(([id, label]) => (
+            <button key={id} className={id === settings.awake ? 'on' : ''} onClick={() => set({ awake: id })}>
+              {label}
+            </button>
+          ))}
+        </div>
+        <span className="muted small">Locking the screen is fine either way. Closing the lid or choosing Sleep yourself still puts it to sleep.</span>
       </div>
       <label className="check">
         <input type="checkbox" checked={settings.notify} onChange={(e) => set({ notify: e.target.checked })} />

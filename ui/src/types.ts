@@ -33,6 +33,7 @@ export interface Settings {
   theme: string
   paneFont: string
   appFont: string
+  awake: string
 }
 
 export interface Pane {

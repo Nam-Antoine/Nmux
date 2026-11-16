@@ -38,7 +38,7 @@ export interface Store {
 }
 
 let store: Store = {
-  state: { workspaces: [], panes: [], machines: [], settings: { textSize: 14, notify: true, skipPermissions: false, theme: 'dark', paneFont: '', appFont: '' } },
+  state: { workspaces: [], panes: [], machines: [], settings: { textSize: 14, notify: true, skipPermissions: false, theme: 'dark', paneFont: '', appFont: '', awake: 'working' } },
   panes: new Map(),
   connected: false,
   problem: null,
