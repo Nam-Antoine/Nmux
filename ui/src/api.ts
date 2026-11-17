@@ -10,6 +10,14 @@ export function call(op: Op): Promise<Reply> {
   return invoke<Reply>('call', { op })
 }
 
+export function note(text: string): void {
+  invoke('note', { text }).catch(() => {})
+}
+
+export function beat(): void {
+  invoke('alive').catch(() => {})
+}
+
 export function send(op: Op): void {
   call(op).catch((err) => console.warn('[nmux]', op.op, err))
 }

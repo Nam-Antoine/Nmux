@@ -13,6 +13,7 @@ import type { Pane, PaneId, Settings } from './types'
 interface Entry {
   term: Terminal
   fit: FitAddon
+  webgl: WebglAddon | null
   host: HTMLDivElement
   sent: { cols: number; rows: number }
   ready: boolean
@@ -46,6 +47,7 @@ function create(pane: PaneId): Entry {
   const entry: Entry = {
     term,
     fit,
+    webgl: null,
     host,
     sent: { cols: 0, rows: 0 },
     ready: false,
@@ -134,14 +136,21 @@ export const terminals = {
     const fresh = !entry
     entry ??= create(pane)
     if (entry.host.parentElement !== container) container.appendChild(entry.host)
-    if (fresh) {
-      entry.term.open(entry.host)
+    if (fresh) entry.term.open(entry.host)
+    if (!entry.webgl) {
+      const held = entry
       try {
         const webgl = new WebglAddon()
-        webgl.onContextLoss(() => webgl.dispose())
+        webgl.onContextLoss(() => {
+          webgl.dispose()
+          if (held.webgl === webgl) held.webgl = null
+        })
         entry.term.loadAddon(webgl)
+        entry.webgl = webgl
       } catch {
       }
+    }
+    if (fresh) {
       entry.observer.observe(entry.host)
       void attach(pane, entry)
     } else {
@@ -151,7 +160,10 @@ export const terminals = {
 
   unmount(pane: PaneId, container: HTMLElement): void {
     const entry = entries.get(pane)
-    if (entry && entry.host.parentElement === container) container.removeChild(entry.host)
+    if (!entry || entry.host.parentElement !== container) return
+    container.removeChild(entry.host)
+    entry.webgl?.dispose()
+    entry.webgl = null
   },
 
   paste(pane: PaneId, text: string): void {

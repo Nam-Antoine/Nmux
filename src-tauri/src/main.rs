@@ -1,8 +1,8 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
-use std::time::Duration;
+use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use nmux_proto::{Event, Op};
 use nmux_server::client::{self, Client};
@@ -17,6 +17,61 @@ struct Bridge {
     client: RwLock<Option<Arc<Client>>>,
     data_dir: PathBuf,
     custom_dir: bool,
+    alive: Mutex<Instant>,
+}
+
+const LOG_LIMIT: u64 = 1024 * 1024;
+const SILENT_FOR: Duration = Duration::from_secs(100);
+
+impl Bridge {
+    fn beat(&self) {
+        *self.alive.lock().unwrap_or_else(|poisoned| poisoned.into_inner()) = Instant::now();
+    }
+
+    fn log(&self, text: &str) {
+        use std::io::Write;
+        let path = self.data_dir.join("window.log");
+        if std::fs::metadata(&path).is_ok_and(|file| file.len() > LOG_LIMIT) {
+            let _ = std::fs::remove_file(&path);
+        }
+        let at = SystemTime::now().duration_since(UNIX_EPOCH).map_or(0, |d| d.as_secs());
+        if let Ok(mut file) = std::fs::OpenOptions::new().create(true).append(true).open(path) {
+            let _ = writeln!(file, "{at} {}", text.chars().take(4000).collect::<String>().replace('\n', " | "));
+        }
+    }
+}
+
+#[tauri::command]
+fn alive(bridge: State<'_, Arc<Bridge>>) {
+    bridge.beat();
+}
+
+#[tauri::command]
+fn note(bridge: State<'_, Arc<Bridge>>, text: String) {
+    bridge.log(&text);
+}
+
+fn reload(app: &AppHandle, why: &str) {
+    let bridge = app.state::<Arc<Bridge>>();
+    bridge.log(why);
+    bridge.beat();
+    if let Some(window) = app.get_webview_window("main") {
+        let _ = window.reload();
+    }
+}
+
+async fn watch(app: AppHandle, bridge: Arc<Bridge>) {
+    loop {
+        tokio::time::sleep(Duration::from_secs(10)).await;
+        let Some(window) = app.get_webview_window("main") else { continue };
+        let shown = window.is_visible().unwrap_or(false) && !window.is_minimized().unwrap_or(true);
+        let silent = bridge.alive.lock().unwrap_or_else(|poisoned| poisoned.into_inner()).elapsed();
+        if !shown {
+            bridge.beat();
+        } else if silent > SILENT_FOR {
+            reload(&app, "the window stopped answering; reloading it");
+        }
+    }
 }
 
 #[tauri::command]
@@ -150,7 +205,7 @@ fn main() {
     let custom = std::env::var_os("NMUX_DATA_DIR").map(PathBuf::from);
     let custom_dir = custom.is_some();
     let data_dir = custom.or_else(nmux_server::default_data_dir).expect("no data directory for Nmux");
-    let bridge = Arc::new(Bridge { client: RwLock::new(None), data_dir, custom_dir });
+    let bridge = Arc::new(Bridge { client: RwLock::new(None), data_dir, custom_dir, alive: Mutex::new(Instant::now()) });
 
     let mut builder = tauri::Builder::default();
     if !custom_dir {
@@ -161,17 +216,22 @@ fn main() {
         .plugin(tauri_plugin_notification::init())
         .plugin(tauri_plugin_opener::init())
         .manage(bridge.clone())
-        .invoke_handler(tauri::generate_handler![call, open_cloud_url, open_path, reveal_path, open_local_port])
+        .invoke_handler(tauri::generate_handler![call, alive, note, open_cloud_url, open_path, reveal_path, open_local_port])
         .setup(move |app| {
             let show = MenuItem::with_id(app, "show", "Show Nmux", true, None::<&str>)?;
+            let reload_item = MenuItem::with_id(app, "reload", "Reload the window (panes keep running)", true, None::<&str>)?;
             let quit_item = MenuItem::with_id(app, "quit", "Quit Nmux (stops every pane)", true, None::<&str>)?;
-            let menu = Menu::with_items(app, &[&show, &quit_item])?;
+            let menu = Menu::with_items(app, &[&show, &reload_item, &quit_item])?;
             let mut tray = TrayIconBuilder::new().tooltip("Nmux").menu(&menu).show_menu_on_left_click(false);
             if let Some(icon) = app.default_window_icon() {
                 tray = tray.icon(icon.clone());
             }
             tray.on_menu_event(|app, event| match event.id.as_ref() {
                 "show" => show_main(app),
+                "reload" => {
+                    reload(app, "reload asked from the tray");
+                    show_main(app);
+                }
                 "quit" => quit(app),
                 _ => {}
             })
@@ -183,6 +243,7 @@ fn main() {
             .build(app)?;
 
             tauri::async_runtime::spawn(relay(app.handle().clone(), bridge.clone()));
+            tauri::async_runtime::spawn(watch(app.handle().clone(), bridge.clone()));
             Ok(())
         })
         .on_window_event(|window, event| {
