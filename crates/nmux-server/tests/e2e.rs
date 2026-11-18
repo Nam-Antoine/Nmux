@@ -103,6 +103,14 @@ async fn a_shell_pane_runs_survives_reattach_and_is_restored() {
         tokio::time::sleep(Duration::from_millis(100)).await;
     }
     assert_eq!(state(&client).await.panes[&pane].status, PaneStatus::Exited);
+    tokio::time::sleep(Duration::from_millis(1500)).await;
+    let saved = nmux_server::persist::load(dir.path()).unwrap().1;
+    assert_eq!(saved, vec![pane], "a pane that ended moments before the server died starts again");
+    client.call(Op::RestartPane { pane }).await.unwrap();
+    client.call(Op::StopPane { pane }).await.unwrap();
+    tokio::time::sleep(Duration::from_millis(1500)).await;
+    let saved = nmux_server::persist::load(dir.path()).unwrap().1;
+    assert!(saved.is_empty(), "a pane the user stopped stays stopped");
     client.call(Op::RestartPane { pane }).await.unwrap();
     assert_eq!(state(&client).await.panes[&pane].status, PaneStatus::Running);
     client.call(Op::Write { pane, data: "echo again-$(1+1)\r".into() }).await.unwrap();

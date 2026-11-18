@@ -156,13 +156,13 @@ function Ports(): React.JSX.Element {
     return () => window.clearInterval(timer)
   }, [refresh])
 
+  const ws = activeWorkspace(s)
+  const here = new Set(ws ? workspacePanes(ws) : [])
   const mine = ports?.filter((p) => p.pane !== undefined && here.has(p.pane)) ?? []
   const other = ports?.filter((p) => p.pane === undefined || !here.has(p.pane)) ?? []
   const remotePort = Number(remote)
   const localPort = local.trim() === '' ? undefined : Number(local)
   const ready = host.trim() !== '' && validPort(remotePort) && (localPort === undefined || validPort(localPort))
-  const ws = activeWorkspace(s)
-  const here = new Set(ws ? workspacePanes(ws) : [])
   const label = (host: string): string | undefined => s.state.machines.find((m) => m.target === host)?.label
 
   const row = (p: ListeningPort): React.JSX.Element => (

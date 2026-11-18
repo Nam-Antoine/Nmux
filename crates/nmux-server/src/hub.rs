@@ -38,11 +38,12 @@ struct Runtime {
     started: Instant,
     failures: u32,
     retry_at: Option<Instant>,
+    ended_at: Option<Instant>,
 }
 
 impl Runtime {
     fn new(generation: u64) -> Runtime {
-        Runtime { screen: Screen::default(), process: None, generation, sniffer: None, detect_dirty: false, started: Instant::now(), failures: 0, retry_at: None }
+        Runtime { screen: Screen::default(), process: None, generation, sniffer: None, detect_dirty: false, started: Instant::now(), failures: 0, retry_at: None, ended_at: None }
     }
 }
 
@@ -80,6 +81,7 @@ const SAVE_EVERY: Duration = Duration::from_millis(500);
 const SHELL_CHECK_TICKS: u32 = 8;
 const RETRY_SECS: [u64; 5] = [2, 4, 8, 15, 30];
 const SETTLED: Duration = Duration::from_secs(60);
+const ENDED_FOR_GOOD: Duration = Duration::from_secs(120);
 
 fn remote_sessions(state: &State, owner: &str) -> HashMap<PaneId, (String, String)> {
     state
@@ -762,6 +764,7 @@ impl Hub {
         rt.generation = generation;
         rt.started = Instant::now();
         rt.retry_at = None;
+        rt.ended_at = None;
         rt.sniffer = (kind == PaneKind::Cloud).then(CloudIdSniffer::default);
         rt.screen.title = None;
         if rt.screen.seq > 0 {
@@ -857,6 +860,7 @@ impl Hub {
                     inner.state.set_running(id);
                 }
                 None => {
+                    rt.ended_at = process.as_ref().map(|_| Instant::now());
                     inner.state.set_exited(id, code);
                 }
             }
@@ -961,10 +965,22 @@ impl Hub {
                 inner.awake = awake;
                 power::stay_awake(awake);
             }
+            for rt in inner.runtimes.values_mut() {
+                if rt.ended_at.is_some_and(|at| at.elapsed() >= ENDED_FOR_GOOD) {
+                    rt.ended_at = None;
+                    inner.save_dirty = true;
+                }
+            }
             if inner.save_dirty && inner.last_save.elapsed() >= SAVE_EVERY {
                 inner.save_dirty = false;
                 inner.last_save = Instant::now();
-                Some(inner.state.clone())
+                let mut state = inner.state.clone();
+                for (id, rt) in &inner.runtimes {
+                    if rt.ended_at.is_some() {
+                        state.set_running(*id);
+                    }
+                }
+                Some(state)
             } else {
                 None
             }

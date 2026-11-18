@@ -64,7 +64,7 @@ async fn watch(app: AppHandle, bridge: Arc<Bridge>) {
     loop {
         tokio::time::sleep(Duration::from_secs(10)).await;
         let Some(window) = app.get_webview_window("main") else { continue };
-        let shown = window.is_visible().unwrap_or(false) && !window.is_minimized().unwrap_or(true);
+        let shown = window.is_visible().unwrap_or(false) && !window.is_minimized().unwrap_or(true) && window.is_focused().unwrap_or(false);
         let silent = bridge.alive.lock().unwrap_or_else(|poisoned| poisoned.into_inner()).elapsed();
         if !shown {
             bridge.beat();
