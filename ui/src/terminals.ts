@@ -70,6 +70,16 @@ function create(pane: PaneId): Entry {
     return true
   })
   term.onData((data) => send({ op: 'write', pane, data }))
+  term.parser.registerOscHandler(52, (data) => {
+    const coded = data.slice(data.indexOf(';') + 1)
+    if (coded === '?') return true
+    try {
+      const text = new TextDecoder().decode(Uint8Array.from(atob(coded), (c) => c.charCodeAt(0)))
+      navigator.clipboard.writeText(text).catch(() => toast('Could not copy: click the Nmux window first.'))
+    } catch {
+    }
+    return true
+  })
   host.addEventListener(
     'paste',
     (ev) => {
