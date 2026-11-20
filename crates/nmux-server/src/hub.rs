@@ -350,8 +350,8 @@ impl Hub {
             Op::ListForwards => Reply::Forwards { forwards: self.forwards.list() },
             Op::ListSshHosts => Reply::SshHosts { hosts: sshconfig::hosts(&self.config.env) },
             Op::StartForward { host, remote_port, local_port } => forwards(self.forwards.start(host.trim(), remote_port, local_port)?),
-            Op::StopForward { id } => forwards(self.forwards.stop(id)?),
-            Op::RemoveForward { id } => forwards(self.forwards.remove(id)?),
+            Op::StopForward { forward } => forwards(self.forwards.stop(forward)?),
+            Op::RemoveForward { forward } => forwards(self.forwards.remove(forward)?),
             Op::CheckMachine { machine } => {
                 let target = {
                     let mut inner = self.lock();

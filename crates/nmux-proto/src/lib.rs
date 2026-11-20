@@ -128,8 +128,8 @@ pub enum Op {
     ListForwards,
     #[serde(rename_all = "camelCase")]
     StartForward { host: String, remote_port: u16, local_port: Option<u16> },
-    StopForward { id: u32 },
-    RemoveForward { id: u32 },
+    StopForward { forward: u32 },
+    RemoveForward { forward: u32 },
 
     SetWindowVisible { visible: bool },
     Shutdown,
@@ -326,6 +326,15 @@ mod tests {
         let json = serde_json::to_value(&req).unwrap();
         assert_eq!(json, serde_json::json!({"id": 7, "op": "resize", "pane": 3, "cols": 120, "rows": 40}));
         assert_eq!(serde_json::from_value::<Request>(json).unwrap(), req);
+    }
+
+    #[test]
+    fn a_request_about_a_forward_survives_the_wire() {
+        for op in [Op::StopForward { forward: 4 }, Op::RemoveForward { forward: 4 }] {
+            let req = Request { id: 7, op };
+            let text = serde_json::to_string(&req).unwrap();
+            assert_eq!(serde_json::from_str::<Request>(&text).unwrap(), req);
+        }
     }
 
     #[test]

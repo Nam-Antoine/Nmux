@@ -24,7 +24,7 @@ function ForwardRow({ f, label }: { f: Forward; label?: string }): React.JSX.Ele
           </button>
         )}
         {up ? (
-          <button className="btn small-btn" onClick={() => void run({ op: 'stopForward', id: f.id })}>
+          <button className="btn small-btn" onClick={() => void run({ op: 'stopForward', forward: f.id })}>
             Stop
           </button>
         ) : (
@@ -32,11 +32,11 @@ function ForwardRow({ f, label }: { f: Forward; label?: string }): React.JSX.Ele
             Start
           </button>
         )}
-        <button className="icon-btn" title="Remove" onClick={() => void run({ op: 'removeForward', id: f.id })}>
+        <button className="icon-btn" title="Remove" onClick={() => void run({ op: 'removeForward', forward: f.id })}>
           <Close />
         </button>
       </div>
-      {f.state === 'failed' && f.error && <div className="forward-error">{f.error}</div>}
+      {f.error && f.state !== 'stopped' && <div className="forward-error">{f.state === 'starting' ? `Lost the connection, trying again: ${f.error}` : f.error}</div>}
     </div>
   )
 }

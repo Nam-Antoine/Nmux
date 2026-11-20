@@ -144,8 +144,8 @@ export type Op =
   | { op: 'gitDiff'; workspace: WorkspaceId; path: string; untracked: boolean }
   | { op: 'listForwards' }
   | { op: 'startForward'; host: string; remotePort: number; localPort?: number }
-  | { op: 'stopForward'; id: number }
-  | { op: 'removeForward'; id: number }
+  | { op: 'stopForward'; forward: number }
+  | { op: 'removeForward'; forward: number }
 
 export interface DirEntry {
   name: string

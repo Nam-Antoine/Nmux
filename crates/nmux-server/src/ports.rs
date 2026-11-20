@@ -200,16 +200,38 @@ struct SavedForward {
     host: String,
     remote_port: u16,
     local_port: u16,
+    #[serde(default)]
+    on: bool,
 }
 
 struct Entry {
     info: Forward,
     child: Option<Child>,
     run: u64,
+    wanted: bool,
+    proven: bool,
+    tries: usize,
+}
+
+impl Entry {
+    fn new(id: u32, host: String, remote_port: u16, local_port: u16, wanted: bool) -> Entry {
+        let info = Forward { id, host, remote_port, local_port, state: ForwardState::Stopped, error: None };
+        Entry { info, child: None, run: 0, wanted, proven: wanted, tries: 0 }
+    }
+
+    fn end(&mut self) {
+        self.run = 0;
+        self.info.state = ForwardState::Stopped;
+        if let Some(mut child) = self.child.take() {
+            let _ = child.kill();
+            let _ = child.wait();
+        }
+    }
 }
 
 type Notify = Arc<dyn Fn(Vec<Forward>) + Send + Sync>;
 
+#[derive(Clone)]
 pub struct Forwards {
     inner: Arc<Mutex<Table>>,
     file: std::path::PathBuf,
@@ -227,9 +249,17 @@ impl Table {
     fn list(&self) -> Vec<Forward> {
         self.entries.iter().map(|e| e.info.clone()).collect()
     }
+
+    fn running(&mut self, id: u32, run: u64) -> Option<&mut Entry> {
+        self.entries.iter_mut().find(|e| e.info.id == id && e.run == run)
+    }
 }
 
-const GRACE: Duration = Duration::from_millis(900);
+const LOOK_EVERY: Duration = Duration::from_millis(500);
+const LOOKS: u32 = 40;
+const RETRY_SECS: [u64; 6] = [2, 4, 8, 15, 30, 60];
+const NEEDS_A_PERSON: [&str; 5] =
+    ["Permission denied", "Host key verification failed", "Address already in use", "cannot listen to port", "Could not request local forwarding"];
 
 impl Forwards {
     pub fn load(data_dir: &Path, notify: Notify) -> Forwards {
@@ -242,13 +272,14 @@ impl Forwards {
                 continue;
             }
             table.next_id += 1;
-            table.entries.push(Entry {
-                info: Forward { id: table.next_id, host: s.host, remote_port: s.remote_port, local_port: s.local_port, state: ForwardState::Stopped, error: None },
-                child: None,
-                run: 0,
-            });
+            table.entries.push(Entry::new(table.next_id, s.host, s.remote_port, s.local_port, s.on));
         }
-        Forwards { inner: Arc::new(Mutex::new(table)), file, notify }
+        let wanted: Vec<u32> = table.entries.iter().filter(|e| e.wanted).map(|e| e.info.id).collect();
+        let forwards = Forwards { inner: Arc::new(Mutex::new(table)), file, notify };
+        for id in wanted {
+            let _ = forwards.connect(id);
+        }
+        forwards
     }
 
     fn table(&self) -> std::sync::MutexGuard<'_, Table> {
@@ -263,7 +294,7 @@ impl Forwards {
         let saved: Vec<SavedForward> = table
             .entries
             .iter()
-            .map(|e| SavedForward { host: e.info.host.clone(), remote_port: e.info.remote_port, local_port: e.info.local_port })
+            .map(|e| SavedForward { host: e.info.host.clone(), remote_port: e.info.remote_port, local_port: e.info.local_port, on: e.wanted })
             .collect();
         if let Ok(body) = serde_json::to_vec_pretty(&saved) {
             let _ = std::fs::write(&self.file, body);
@@ -279,67 +310,95 @@ impl Forwards {
         }
         let local_port = local_port.filter(|p| *p != 0).unwrap_or(remote_port);
 
-        let mut table = self.table();
-        let index = match table.entries.iter().position(|e| e.info.host == host && e.info.remote_port == remote_port && e.info.local_port == local_port) {
-            Some(i) => i,
-            None => {
-                table.next_id += 1;
-                let id = table.next_id;
-                table.entries.push(Entry {
-                    info: Forward { id, host: host.to_string(), remote_port, local_port, state: ForwardState::Stopped, error: None },
-                    child: None,
-                    run: 0,
-                });
-                table.entries.len() - 1
+        let id = {
+            let mut table = self.table();
+            let index = match table.entries.iter().position(|e| e.info.host == host && e.info.remote_port == remote_port && e.info.local_port == local_port) {
+                Some(i) => i,
+                None => {
+                    table.next_id += 1;
+                    let id = table.next_id;
+                    table.entries.push(Entry::new(id, host.to_string(), remote_port, local_port, false));
+                    table.entries.len() - 1
+                }
+            };
+            let entry = &mut table.entries[index];
+            if entry.wanted {
+                return Ok(table.list());
             }
+            entry.wanted = true;
+            entry.proven = false;
+            entry.tries = 0;
+            entry.info.error = None;
+            entry.info.id
         };
-        if matches!(table.entries[index].info.state, ForwardState::Starting | ForwardState::Active) {
-            return Ok(table.list());
-        }
+        self.connect(id)?;
+        Ok(self.list())
+    }
 
+    fn connect(&self, id: u32) -> Result<(), String> {
+        let mut table = self.table();
+        let Some(index) = table.entries.iter().position(|e| e.info.id == id && e.wanted && e.child.is_none()) else { return Ok(()) };
+        let info = table.entries[index].info.clone();
         let mut command = Command::new("ssh");
         quiet(&mut command)
             .arg("-N")
             .args(["-o", "ControlPath=none"])
             .args(["-o", "ExitOnForwardFailure=yes"])
             .args(["-o", "BatchMode=yes"])
-            .args(["-o", "ServerAliveInterval=30"])
+            .args(["-o", "ConnectTimeout=15"])
+            .args(["-o", "ServerAliveInterval=15"])
+            .args(["-o", "ServerAliveCountMax=3"])
             .arg("-L")
-            .arg(format!("127.0.0.1:{local_port}:localhost:{remote_port}"))
+            .arg(format!("127.0.0.1:{}:localhost:{}", info.local_port, info.remote_port))
             .arg("--")
-            .arg(host)
+            .arg(&info.host)
             .stdout(Stdio::null())
             .stderr(Stdio::piped());
-        let mut child = command.spawn().map_err(|e| format!("could not run ssh: {e}"))?;
+        let mut child = match command.spawn() {
+            Ok(child) => child,
+            Err(e) => {
+                let why = format!("could not run ssh: {e}");
+                let entry = &mut table.entries[index];
+                entry.wanted = false;
+                entry.info.state = ForwardState::Failed;
+                entry.info.error = Some(why.clone());
+                self.save(&table);
+                return Err(why);
+            }
+        };
         let stderr = child.stderr.take();
+        let pid = child.id();
 
         table.next_run += 1;
         let run = table.next_run;
         let entry = &mut table.entries[index];
-        let id = entry.info.id;
         entry.child = Some(child);
         entry.run = run;
         entry.info.state = ForwardState::Starting;
-        entry.info.error = None;
         self.save(&table);
-        let list = table.list();
         drop(table);
 
-        let (inner, notify) = (self.inner.clone(), self.notify.clone());
+        let me = self.clone();
         std::thread::spawn(move || {
-            std::thread::sleep(GRACE);
-            let mut table = inner.lock().unwrap_or_else(|p| p.into_inner());
-            if let Some(entry) = table.entries.iter_mut().find(|e| e.info.id == id && e.run == run) {
-                if entry.info.state == ForwardState::Starting {
+            for look in 1..=LOOKS {
+                std::thread::sleep(LOOK_EVERY);
+                let open = look == LOOKS || raw_listeners().iter().any(|l| l.1 == info.local_port && l.2 == pid);
+                let mut table = me.table();
+                let Some(entry) = table.running(id, run).filter(|e| e.child.is_some()) else { return };
+                if open {
                     entry.info.state = ForwardState::Active;
+                    entry.info.error = None;
+                    entry.proven = true;
+                    entry.tries = 0;
                     let list = table.list();
                     drop(table);
-                    notify(list);
+                    (me.notify)(list);
+                    return;
                 }
             }
         });
 
-        let (inner, notify) = (self.inner.clone(), self.notify.clone());
+        let me = self.clone();
         std::thread::spawn(move || {
             let mut last = String::new();
             if let Some(stderr) = stderr {
@@ -349,31 +408,46 @@ impl Forwards {
                     }
                 }
             }
-            let mut table = inner.lock().unwrap_or_else(|p| p.into_inner());
-            let Some(entry) = table.entries.iter_mut().find(|e| e.info.id == id && e.run == run) else { return };
+            let mut table = me.table();
+            let Some(entry) = table.running(id, run) else { return };
             if let Some(mut child) = entry.child.take() {
                 let _ = child.wait();
             }
-            if entry.info.state != ForwardState::Stopped {
-                entry.info.state = ForwardState::Failed;
+            let mut wait = None;
+            if entry.wanted {
+                let again = entry.proven && !NEEDS_A_PERSON.iter().any(|text| last.contains(text));
                 entry.info.error = Some(if last.is_empty() { "ssh exited".to_string() } else { last });
+                if again {
+                    entry.info.state = ForwardState::Starting;
+                    wait = Some(RETRY_SECS[entry.tries.min(RETRY_SECS.len() - 1)]);
+                    entry.tries += 1;
+                } else {
+                    entry.info.state = ForwardState::Failed;
+                    entry.wanted = false;
+                    me.save(&table);
+                }
             }
             let list = table.list();
             drop(table);
-            notify(list);
+            (me.notify)(list);
+            if let Some(wait) = wait {
+                std::thread::sleep(Duration::from_secs(wait));
+                if me.table().running(id, run).is_some() && me.connect(id).is_err() {
+                    (me.notify)(me.list());
+                }
+            }
         });
 
-        Ok(list)
+        Ok(())
     }
 
     pub fn stop(&self, id: u32) -> Result<Vec<Forward>, String> {
         let mut table = self.table();
         let entry = table.entries.iter_mut().find(|e| e.info.id == id).ok_or("no such forward")?;
-        entry.info.state = ForwardState::Stopped;
+        entry.wanted = false;
         entry.info.error = None;
-        if let Some(child) = entry.child.as_mut() {
-            let _ = child.kill();
-        }
+        entry.end();
+        self.save(&table);
         Ok(table.list())
     }
 
@@ -388,10 +462,7 @@ impl Forwards {
     pub fn stop_all(&self) {
         let mut table = self.table();
         for entry in table.entries.iter_mut() {
-            entry.info.state = ForwardState::Stopped;
-            if let Some(child) = entry.child.as_mut() {
-                let _ = child.kill();
-            }
+            entry.end();
         }
     }
 }
@@ -471,5 +542,29 @@ mod tests {
         let list = again.list();
         assert_eq!((list.len(), list[0].state, list[0].host.as_str()), (1, ForwardState::Stopped, "nmux-test.invalid"));
         assert!(again.remove(list[0].id).unwrap().is_empty());
+    }
+
+    #[test]
+    fn a_forward_that_was_on_comes_back_and_keeps_trying() {
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join("forwards.json");
+        std::fs::write(&file, r#"[{"host":"nmux-test.invalid","remote_port":8080,"local_port":8080,"on":true}]"#).unwrap();
+        let (tx, rx) = std::sync::mpsc::channel();
+        let forwards = Forwards::load(
+            dir.path(),
+            Arc::new(move |list| {
+                let _ = tx.send(list);
+            }),
+        );
+        let first = forwards.list();
+        if first[0].state != ForwardState::Starting {
+            return;
+        }
+        let lost = rx.recv_timeout(Duration::from_secs(30)).expect("ssh should give up");
+        assert_eq!(lost[0].state, ForwardState::Starting, "it is tried again, not left failed");
+        assert!(lost[0].error.as_deref().is_some_and(|e| !e.is_empty()));
+        assert!(std::fs::read_to_string(&file).unwrap().contains("\"on\": true"));
+        forwards.stop(first[0].id).unwrap();
+        assert!(std::fs::read_to_string(&file).unwrap().contains("\"on\": false"));
     }
 }
